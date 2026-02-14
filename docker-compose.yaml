@@ -6,6 +6,13 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: mysecretpassword
       POSTGRES_DB: momentum
+      # Use host machine IP for proxy and exclude local services from proxy
+      HTTP_PROXY: "http://192.168.1.10:7890"
+      HTTPS_PROXY: "http://192.168.1.10:7890"
+      http_proxy: "http://192.168.1.10:7890"
+      https_proxy: "http://192.168.1.10:7890"
+      NO_PROXY: "localhost,127.0.0.1,postgres,neo4j,redis"
+      no_proxy: "localhost,127.0.0.1,postgres,neo4j,redis"
     ports:
       - "5432:5432"
     volumes:
@@ -13,7 +20,7 @@ services:
     networks:
       - app-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY && pg_isready -U postgres"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -23,9 +30,16 @@ services:
     container_name: potpie_neo4j
     environment:
       NEO4J_AUTH: neo4j/mysecretpassword
-      NEO4JLABS_PLUGINS: '["apoc"]' # Add this line to include APOC plugin
+      NEO4J_PLUGINS: '["apoc"]' # Install APOC plugin (Neo4j 5.0+ syntax)
       NEO4J_dbms_security_procedures_unrestricted: "apoc.*" # Allow APOC procedures
       NEO4J_dbms_memory_transaction_total_max: 0
+      # Use host machine IP for proxy and exclude local services from proxy
+      HTTP_PROXY: "http://192.168.1.10:7890"
+      HTTPS_PROXY: "http://192.168.1.10:7890"
+      http_proxy: "http://192.168.1.10:7890"
+      https_proxy: "http://192.168.1.10:7890"
+      NO_PROXY: "localhost,127.0.0.1,postgres,neo4j,redis"
+      no_proxy: "localhost,127.0.0.1,postgres,neo4j,redis"
     ports:
       - "7474:7474"
       - "7687:7687"
@@ -38,6 +52,14 @@ services:
   redis:
     image: redis:latest
     container_name: potpie_redis_broker
+    environment:
+      # Use host machine IP for proxy and exclude local services from proxy
+      HTTP_PROXY: "http://192.168.1.10:7890"
+      HTTPS_PROXY: "http://192.168.1.10:7890"
+      http_proxy: "http://192.168.1.10:7890"
+      https_proxy: "http://192.168.1.10:7890"
+      NO_PROXY: "localhost,127.0.0.1,postgres,neo4j,redis"
+      no_proxy: "localhost,127.0.0.1,postgres,neo4j,redis"
     ports:
       - "6379:6379"
     volumes:
