@@ -99,6 +99,11 @@ dev = [
     "pytest-asyncio>=1.2.0",
     "ruff>=0.14.3",
 ]
+cli = [
+    "click>=8.1.0",
+    "rich>=13.0.0",
+    "pyyaml>=6.0",
+]
 
 [tool.setuptools.packages.find]
 include = ["potpie*", "app*"]
