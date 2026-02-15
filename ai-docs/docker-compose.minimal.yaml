@@ -1,0 +1,56 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:latest
+    container_name: potpie_postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: mysecretpassword
+      POSTGRES_DB: momentum
+      # Proxy configuration
+      HTTP_PROXY: "http://192.168.1.10:7890"
+      HTTPS_PROXY: "http://192.168.1.10:7890"
+      http_proxy: "http://192.168.1.10:7890"
+      https_proxy: "http://192.168.1.10:7890"
+      NO_PROXY: "localhost,127.0.0.1,postgres,neo4j,redis"
+      no_proxy: "localhost,127.0.0.1,postgres,neo4j,redis"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD-SHELL", "unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY && pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:latest
+    container_name: potpie_redis
+    environment:
+      # Proxy configuration
+      HTTP_PROXY: "http://192.168.1.10:7890"
+      HTTPS_PROXY: "http://192.168.1.10:7890"
+      http_proxy: "http://192.168.1.10:7890"
+      https_proxy: "http://192.168.1.10:7890"
+      NO_PROXY: "localhost,127.0.0.1,postgres,neo4j,redis"
+      no_proxy: "localhost,127.0.0.1,postgres,neo4j,redis"
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - app-network
+    restart: unless-stopped
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
