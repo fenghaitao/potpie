@@ -300,6 +300,7 @@ async def _chat(project_id: Optional[str], agent_id: str):
         ))
         
         history = []
+        MAX_HISTORY_TURNS = 5  # Keep only last 5 conversation turns to avoid token limit
         
         while True:
             try:
@@ -335,9 +336,13 @@ async def _chat(project_id: Optional[str], agent_id: str):
                 
                 console.print()  # New line after response
                 
-                # Update history
+                # Update history (keep only recent turns to avoid token limit)
                 history.append({"role": "user", "content": query})
                 history.append({"role": "assistant", "content": response_text})
+                
+                # Trim history to prevent token overflow
+                if len(history) > MAX_HISTORY_TURNS * 2:  # Each turn = 2 messages
+                    history = history[-MAX_HISTORY_TURNS * 2:]
                 
             except Exception as e:
                 console.print(f"\n[red]Error during agent execution: {e}[/red]")
