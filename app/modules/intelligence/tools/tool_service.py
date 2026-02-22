@@ -94,6 +94,7 @@ from langchain_core.tools import StructuredTool
 from .todo_management_tool import create_todo_management_tools
 from .code_changes_manager import create_code_changes_management_tools
 from .requirement_verification_tool import create_requirement_verification_tools
+from .wiki_tools.write_wiki_page_tool import get_write_wiki_page_tool
 
 
 class ToolService:
@@ -210,6 +211,9 @@ class ToolService:
         requirement_tools = create_requirement_verification_tools()
         for tool in requirement_tools:
             tools[tool.name] = tool
+
+        # Add wiki page writing tool
+        tools["write_wiki_page"] = get_write_wiki_page_tool()
 
         if self.webpage_extractor_tool:
             tools["webpage_extractor"] = self.webpage_extractor_tool

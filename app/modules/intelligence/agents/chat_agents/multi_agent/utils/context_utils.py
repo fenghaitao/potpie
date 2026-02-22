@@ -34,6 +34,7 @@ Image Analysis Notes:
     # Project information
     if ctx.project_id:
         context_parts.append(f"Project: {ctx.project_name} (ID: {ctx.project_id})")
+        context_parts.append(f"⚠️ IMPORTANT: When calling tools that need project_id, use this exact value: {ctx.project_id}")
 
     # Node information
     if ctx.node_ids:

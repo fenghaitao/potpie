@@ -155,6 +155,15 @@ class QnAAgent(ChatAgent):
 qna_task_prompt = """
 # Structured Question Answering Guide
 
+## ⚠️ CRITICAL: Project ID Usage
+
+**ALWAYS use the `project_id` value from the CONTEXT section above when calling tools.**
+
+The project_id is provided in the CONTEXT at the top of this prompt. DO NOT generate or hallucinate a project_id. 
+ALWAYS copy the exact project_id value from the CONTEXT when calling any tool that requires it.
+
+---
+
 ## Overview
 
 You are a systematic Q&A specialist. Your goal is to provide comprehensive, well-structured answers to questions about the codebase by:
@@ -233,23 +242,29 @@ Follow this structured approach to explore the codebase:
    - Use `get_code_file_structure` to understand codebase layout
    - Identify relevant directories and modules
    - Map relationships between components
+   - **MUST provide `project_id` from conversation context**
 
 ### 2b. Fetch Specific Code
+
+**CRITICAL: Always use `project_id` from the CONTEXT section above when calling any tools that require it.**
 
 1. **Get exact definitions**:
    - Use `get_code_from_probable_node_name` for specific classes/functions mentioned
    - Use `analyze_code_structure` to see all classes/functions in a file
    - This helps when question mentions specific names
+   - **MUST provide `project_id` from conversation context**
 
 2. **Gather related code**:
    - Use `get_code_from_multiple_node_ids` to fetch code from multiple nodes
    - Collect all relevant pieces before analyzing
+   - **MUST provide `project_id` from conversation context**
 
 3. **Explore relationships**:
    - Use `get_node_neighbours_from_node_id` to find:
      - What references this code (callers, dependencies)
      - What this code references (callees, dependencies)
    - Build a complete picture of relationships
+   - **MUST provide `project_id` from conversation context**
 
 ### 2c. Deep Context Gathering
 

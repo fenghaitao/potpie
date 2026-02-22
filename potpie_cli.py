@@ -478,6 +478,95 @@ async def _code(description: str, project_id: Optional[str], preview: bool):
 
 
 @cli.command()
+@click.option('--project', '-p', help='Project ID')
+@click.option('--query', '-q',
+              default=None,
+              help='Custom wiki generation instruction')
+@click.option('--section', '-s', default=None,
+              help='Generate only a specific section, e.g. "Core Architecture"')
+def wiki(project: Optional[str], query: str, section: Optional[str]):
+    """
+    📖 Generate wiki pages for a project into .qoder/repowiki/.
+
+    Examples:
+        potpie wiki                                      # Generate full wiki for last project
+        potpie wiki -p <project-id>                      # Specify project
+        potpie wiki -s "Core Architecture"               # One section only
+        potpie wiki -q "Document the auth module only"   # Custom instruction
+    """
+    if query is None:
+        if section:
+            query = f'Generate wiki pages for the "{section}" section only'
+        else:
+            query = 'Generate wiki pages for the entire repository'
+    asyncio.run(_wiki(project, query))
+
+
+async def _wiki(project_id: Optional[str], query: str):
+    """Wiki generation implementation."""
+    try:
+        if not project_id:
+            project_id = _get_last_project()
+            if not project_id:
+                console.print("[yellow]No project specified. Use --project <id> or parse a repo first.[/yellow]")
+                raise click.Abort()
+
+        runtime = await ctx_obj.get_runtime()
+
+        try:
+            agent = runtime.agents.wiki_agent
+        except AttributeError:
+            console.print("[red]wiki_agent not found. Make sure it is registered in agents_service.py.[/red]")
+            raise click.Abort()
+
+        project_info = await runtime.projects.get(project_id)
+
+        console.print(Panel.fit(
+            f"[bold cyan]Project:[/bold cyan] {project_info.repo_name}\n"
+            f"[bold cyan]Project ID:[/bold cyan] {project_id}\n"
+            f"[bold cyan]Output:[/bold cyan] .qoder/repowiki/en/content/\n"
+            f"[bold cyan]Query:[/bold cyan] {query}",
+            title="📖 Wiki Generation",
+            border_style="cyan"
+        ))
+
+        ctx = ChatContext(
+            project_id=project_id,
+            project_name=project_info.repo_name,
+            curr_agent_id="wiki_agent",
+            query=query,
+            history=[],
+            user_id=ctx_obj.default_user_id,
+            conversation_id=f"wiki_{project_id}",
+        )
+
+        console.print("\n[bold green]🤖 Wiki Agent:[/bold green] generating...\n")
+
+        pages_written = []
+        async for chunk in agent.stream(ctx):
+            if chunk.response:
+                console.print(chunk.response, end="", markup=False)
+                # track written pages from tool output lines
+                if "✅ Wiki page written to:" in chunk.response:
+                    for line in chunk.response.splitlines():
+                        if "✅ Wiki page written to:" in line:
+                            pages_written.append(line.split("✅ Wiki page written to:")[-1].strip())
+
+        console.print("\n")
+
+        if pages_written:
+            console.print(f"\n[bold green]✅ {len(pages_written)} wiki page(s) written:[/bold green]")
+            for p in pages_written:
+                console.print(f"   [cyan]{p}[/cyan]")
+        else:
+            console.print("[yellow]Wiki generation complete. Check .qoder/repowiki/en/content/ for output.[/yellow]")
+
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] {e}")
+        raise click.Abort()
+
+
+@cli.command()
 def agents():
     """
     📋 List all available agents and their descriptions.
@@ -514,9 +603,17 @@ async def _list_agents():
 # PROJECT MANAGEMENT COMMANDS
 # ============================================================================
 
-@cli.command()
+@cli.group()
+def projects():
+    """
+    📁 Manage projects (list, remove, etc.).
+    """
+    pass
+
+
+@projects.command(name="list")
 @click.option('--user-id', '-u', help='Filter by user ID')
-def projects(user_id: Optional[str]):
+def list_projects_cmd(user_id: Optional[str]):
     """
     📁 List all registered projects.
     """
@@ -561,6 +658,79 @@ async def _list_projects(user_id: str):
         raise click.Abort()
 
 
+@projects.command(name="remove")
+@click.argument('project_id')
+@click.option('--force', '-f', is_flag=True, help='Skip confirmation prompt')
+def remove_project_cmd(project_id: str, force: bool):
+    """
+    🗑️  Remove a project and its associated data.
+    
+    Examples:
+        potpie projects remove <project-id>
+        potpie projects remove <project-id> --force
+    """
+    asyncio.run(_remove_project(project_id, force))
+
+
+async def _remove_project(project_id: str, force: bool):
+    """Remove a project implementation."""
+    try:
+        runtime = await ctx_obj.get_runtime()
+        
+        # Get project info first to display details
+        project_info = await runtime.projects.get(project_id)
+        
+        if project_info is None:
+            console.print(f"[bold red]Error:[/bold red] Project '{project_id}' not found.")
+            raise click.Abort()
+        
+        # Show what will be deleted
+        console.print(Panel.fit(
+            f"[bold cyan]Project ID:[/bold cyan] {project_info.id}\n"
+            f"[bold cyan]Name:[/bold cyan] {project_info.repo_name}\n"
+            f"[bold cyan]Branch:[/bold cyan] {project_info.branch_name}\n"
+            f"[bold cyan]Status:[/bold cyan] {project_info.status.value}",
+            title="🗑️  Project to Remove",
+            border_style="red"
+        ))
+        
+        # Confirm deletion unless --force is used
+        if not force:
+            console.print("\n[bold yellow]⚠️  Warning:[/bold yellow] This will delete the project and all associated data from the knowledge graph.")
+            confirmation = console.input("[bold red]Are you sure you want to proceed? (yes/no):[/bold red] ")
+            
+            if confirmation.lower() not in ['yes', 'y']:
+                console.print("[yellow]Deletion cancelled.[/yellow]")
+                return
+        
+        # Perform deletion
+        with console.status("[bold cyan]Deleting project...", spinner="dots"):
+            await runtime.projects.delete(project_id)
+        
+        console.print(f"\n[bold green]✅ Project '{project_info.repo_name}' successfully deleted![/bold green]")
+        
+        # Clear from config if this was the last used project
+        last_project = _get_last_project()
+        if last_project == project_id:
+            import yaml
+            ctx_obj.config_dir.mkdir(exist_ok=True)
+            config = {}
+            if ctx_obj.config_file.exists():
+                with open(ctx_obj.config_file) as f:
+                    config = yaml.safe_load(f) or {}
+            if 'last_project' in config:
+                del config['last_project']
+                with open(ctx_obj.config_file, 'w') as f:
+                    yaml.dump(config, f)
+                console.print("[dim]Cleared from last used project cache.[/dim]")
+        
+    except click.Abort:
+        raise
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] {e}")
+        raise click.Abort()
+
+
 # ============================================================================
 # UTILITY FUNCTIONS
 # ============================================================================
@@ -598,6 +768,146 @@ def _get_last_project() -> Optional[str]:
         return config.get('last_project', {}).get('id')
     except Exception:
         return None
+
+
+# ============================================================================
+# EVAL COMMAND
+# ============================================================================
+
+# Default eval cases covering common codebase Q&A scenarios
+_DEFAULT_EVAL_CASES = [
+    {
+        "name": "architecture overview",
+        "question": "Explain the overall system architecture",
+        "rubrics": [
+            "Answer is specific to the actual codebase, not a generic description",
+            "Answer mentions at least two concrete components, modules, or layers from the project",
+        ],
+    },
+    {
+        "name": "entry point",
+        "question": "What is the main entry point of the application?",
+        "rubrics": [
+            "Answer identifies a specific file or function as the entry point",
+            "Answer does not just say 'I don't know' or ask for clarification",
+        ],
+    },
+    {
+        "name": "data flow",
+        "question": "How does data flow from an API request to the database?",
+        "rubrics": [
+            "Answer describes at least two steps in the data flow",
+            "Answer references actual files, classes, or functions from the codebase",
+        ],
+    },
+    {
+        "name": "key dependencies",
+        "question": "What are the main external libraries or frameworks used?",
+        "rubrics": [
+            "Answer lists at least two real dependencies from the project",
+            "Answer does not hallucinate libraries not present in the project",
+        ],
+    },
+]
+
+
+@cli.command()
+@click.option("--project", "-p", required=True, help="Project ID to evaluate against")
+@click.option("--agent", "-a", default="codebase_qna_agent", show_default=True, help="Agent ID to evaluate")
+@click.option("--cases", "-c", default=None, help="Path to YAML file with custom eval cases")
+@click.option("--concurrency", default=1, show_default=True, help="Max concurrent evaluations")
+def eval(project: str, agent: str, cases: Optional[str], concurrency: int):
+    """
+    🧪 Evaluate agent response quality using LLM-as-a-judge.
+
+    Runs a set of Q&A cases against the agent and scores each answer
+    using pydantic_evals LLMJudge rubrics.
+
+    Examples:
+        potpie eval -p <project-id>
+        potpie eval -p <project-id> --cases my_cases.yaml
+        potpie eval -p <project-id> --agent codebase_qna_agent --concurrency 2
+    """
+    asyncio.run(_eval(project, agent, cases, concurrency))
+
+
+async def _eval(project_id: str, agent_id: str, cases_path: Optional[str], concurrency: int):
+    """Run evaluation."""
+    import yaml as _yaml
+    from dataclasses import dataclass
+    from pydantic_evals import Case, Dataset
+    from pydantic_evals.evaluators import LLMJudge
+    from pydantic_evals.evaluators.llm_as_a_judge import set_default_judge_model
+    from app.modules.intelligence.provider.litellm_model import LiteLLMModel
+
+    try:
+        runtime = await ctx_obj.get_runtime()
+        project_info = await runtime.projects.get(project_id)
+
+        # Point the LLM judge at the same model we use for everything else
+        import os
+        judge_model_name = os.environ.get("CHAT_MODEL", "github_copilot/gpt-4o")
+        set_default_judge_model(LiteLLMModel(judge_model_name))
+
+        # Load cases
+        if cases_path:
+            with open(cases_path) as f:
+                raw = _yaml.safe_load(f)
+            eval_cases_data = raw.get("cases", raw) if isinstance(raw, dict) else raw
+        else:
+            eval_cases_data = _DEFAULT_EVAL_CASES
+
+        # Build pydantic_evals Dataset
+        @dataclass
+        class EvalInputs:
+            question: str
+
+        cases_list = []
+        for c in eval_cases_data:
+            rubrics = c.get("rubrics", [c.get("rubric", "Answer is helpful and accurate")])
+            cases_list.append(
+                Case(
+                    name=c.get("name", c["question"][:50]),
+                    inputs=EvalInputs(question=c["question"]),
+                    evaluators=tuple(LLMJudge(rubric=r) for r in rubrics),
+                )
+            )
+
+        dataset: Dataset[EvalInputs, str, None] = Dataset(cases=cases_list)
+
+        console.print(f"\n[bold cyan]🧪 Evaluating[/bold cyan] [green]{project_info.repo_name}[/green] "
+                      f"with agent [yellow]{agent_id}[/yellow] — {len(cases_list)} cases\n")
+
+        # Task function: call the agent and return the text response
+        async def task(inputs: EvalInputs) -> str:
+            try:
+                agent_handle = getattr(runtime.agents, agent_id)
+                ctx = ChatContext(
+                    project_id=project_id,
+                    project_name=project_info.repo_name,
+                    curr_agent_id=agent_id,
+                    query=inputs.question,
+                    history=[],
+                    user_id=ctx_obj.default_user_id,
+                )
+                response = await agent_handle.query(ctx)
+                return response.response
+            except Exception as e:
+                return f"ERROR: {e}"
+
+        report = await dataset.evaluate(task, max_concurrency=concurrency, progress=True)
+        report.print(console=console, include_input=True)
+
+        # Summary score
+        averages = report.averages()
+        if averages and averages.assertions is not None:
+            score_pct = averages.assertions * 100
+            color = "green" if score_pct >= 70 else "yellow" if score_pct >= 40 else "red"
+            console.print(f"\n[bold]Overall pass rate: [{color}]{score_pct:.0f}%[/{color}][/bold]")
+
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] {e}")
+        raise click.Abort()
 
 
 # ============================================================================

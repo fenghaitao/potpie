@@ -32,6 +32,12 @@ if ! command -v uv >/dev/null 2>&1; then
     exit 1
 fi
 
+# Create virtual environment if it doesn't exist
+if [ ! -d ".venv" ]; then
+    echo "Creating virtual environment..."
+    uv venv
+fi
+
 # Synchronize and create the managed virtual environment if needed
 echo "Syncing Python environment with uv..."
 if ! uv sync; then
@@ -74,12 +80,7 @@ if [[ "$OSTYPE" == "darwin"* ]] || [[ "$OSTYPE" == "msys" ]] || [[ "$OSTYPE" == 
 fi
 
 # Apply database migrations within the uv-managed environment
-
-uv venv
-
 source .venv/bin/activate
-
-uv sync
 
 alembic upgrade heads
 

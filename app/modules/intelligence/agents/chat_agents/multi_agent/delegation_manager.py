@@ -74,6 +74,9 @@ class DelegationManager:
 
             CRITICAL: Subagents are ISOLATED - they receive ONLY what you provide here.
             They do NOT get your conversation history or previous tool results.
+            
+            IMPORTANT: The project_id from the current context is automatically injected.
+            You do NOT need to include it in the context parameter.
 
             Args:
                 task_description: Clear, detailed description of the task to execute.
@@ -85,6 +88,8 @@ class DelegationManager:
                     - Previous findings or analysis results
                     - Error messages, configuration values, specific details
                     - Everything the subagent needs to work autonomously
+                    
+                    NOTE: project_id is automatically added - do NOT include it here.
 
                     Example: "Bug in app/api/router.py:45-67. Function process_request()
                     calls validate_input() which returns None. Error: 'NoneType has no

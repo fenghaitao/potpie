@@ -54,7 +54,32 @@ class InferenceService:
         self.embedding_model = get_embedding_model()  # Use singleton to avoid reloading
         self.search_service = SearchService(db)
         self.project_manager = ProjectService(db)
-        self.parallel_requests = int(os.getenv("PARALLEL_REQUESTS", 50))
+        
+        # Provider-specific rate limiting
+        # GitHub Copilot has strict rate limits (150 requests/minute for free tier)
+        # Set conservative defaults per provider
+        default_parallel = int(os.getenv("PARALLEL_REQUESTS", 0))
+        if default_parallel == 0:
+            # Auto-detect based on provider
+            inference_model = self.provider_service.inference_config.model
+            auth_provider = self.provider_service.inference_config.auth_provider
+            
+            if auth_provider == "github_copilot":
+                # GitHub Copilot: 5 requests for balanced throughput (~80-100 req/min)
+                # Stays under 150/min limit with buffer for retries (67% utilization)
+                default_parallel = int(os.getenv("GITHUB_COPILOT_PARALLEL_REQUESTS", 5))
+                logger.info(f"Using GitHub Copilot with parallel_requests={default_parallel} (rate limit: 150 req/min)")
+            elif auth_provider in ["anthropic", "openai"]:
+                # OpenAI/Anthropic: more generous limits
+                default_parallel = int(os.getenv("OPENAI_PARALLEL_REQUESTS", 20))
+                logger.info(f"Using {auth_provider} with parallel_requests={default_parallel}")
+            else:
+                # Other providers: moderate default
+                default_parallel = 10
+                logger.info(f"Using {auth_provider} with parallel_requests={default_parallel}")
+        
+        self.parallel_requests = default_parallel
+        logger.info(f"Inference service initialized with parallel_requests={self.parallel_requests}")
 
     def close(self):
         self.driver.close()

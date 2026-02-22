@@ -121,16 +121,47 @@ class PydanticRagAgent(ChatAgent):
             "supports_tool_parallelism", True
         )
 
-        agent_kwargs = {
-            "model": self.llm_provider.get_pydantic_model(),
-            "tools": [
+        # Pre-bind project_id to tools that need it
+        pydantic_tools = []
+        for tool in self.tools:
+            tool_func = tool.func
+            
+            # Check if the tool has a project_id parameter
+            sig = inspect.signature(tool_func)
+            if "project_id" in sig.parameters:
+                # Pre-bind project_id from context to avoid LLM hallucination.
+                # Must preserve __annotations__ (minus project_id) and __wrapped__
+                # so pydantic-ai's function_schema can build the JSON schema.
+                def create_wrapper(func, proj_id):
+                    @functools.wraps(func)
+                    def wrapper(*args, **kwargs):
+                        return func(*args, project_id=proj_id, **kwargs)
+                    # Remove project_id from annotations and signature so pydantic-ai
+                    # doesn't try to include it in the tool schema.
+                    orig_hints = {
+                        k: v for k, v in (func.__annotations__ or {}).items()
+                        if k != "project_id"
+                    }
+                    wrapper.__annotations__ = orig_hints
+                    orig_params = {
+                        k: v for k, v in inspect.signature(func).parameters.items()
+                        if k != "project_id"
+                    }
+                    wrapper.__signature__ = sig.replace(parameters=list(orig_params.values()))
+                    return wrapper
+                tool_func = create_wrapper(tool_func, ctx.project_id)
+            
+            pydantic_tools.append(
                 Tool(
                     name=tool.name,
                     description=tool.description,
-                    function=handle_exception(tool.func),  # type: ignore
+                    function=handle_exception(tool_func),  # type: ignore
                 )
-                for tool in self.tools
-            ],
+            )
+        
+        agent_kwargs = {
+            "model": self.llm_provider.get_pydantic_model(),
+            "tools": pydantic_tools,
             "mcp_servers": mcp_toolsets,
             "instructions": f"""
 # Agent Execution Guidelines
@@ -262,6 +293,10 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
         return f"""
                 CONTEXT:
                 Project ID: {ctx.project_id}
+                
+                🚨 CRITICAL: When calling ANY tool that requires a 'project_id' parameter, you MUST use this EXACT value: {ctx.project_id}
+                DO NOT generate, invent, or hallucinate different project IDs. Copy the exact UUID shown above.
+                
                 Node IDs: {" ,".join(ctx.node_ids)}
                 Project Name (this is name from github. i.e. owner/repo): {ctx.project_name}
 

@@ -63,6 +63,14 @@ OVERLOAD_ERROR_PATTERNS = {
         "server_error",
         "timeout",
     ],
+    "github_copilot": [
+        "rate limit",
+        "rate_limit",
+        "too many requests",
+        "429",
+        "quota exceeded",
+        "requests per minute",
+    ],
     "general": [
         "timeout",
         "insufficient capacity",
@@ -106,7 +114,7 @@ def identify_provider_from_error(error: Exception) -> str:
     error_str = str(error).lower()
 
     # Try to identify provider from error message
-    for provider in ["anthropic", "openai", "cohere", "azure"]:
+    for provider in ["github_copilot", "anthropic", "openai", "cohere", "azure"]:
         if provider.lower() in error_str.lower():
             return provider
 
@@ -160,18 +168,28 @@ def is_recoverable_error(error: Exception, settings: RetrySettings) -> bool:
     return False
 
 
-def calculate_backoff_time(retry_count: int, settings: RetrySettings) -> float:
-    """Calculate exponential backoff with jitter"""
+def calculate_backoff_time(retry_count: int, settings: RetrySettings, provider: str = "unknown") -> float:
+    """Calculate exponential backoff with jitter, with provider-specific adjustments"""
+    # GitHub Copilot needs longer delays due to strict rate limits
+    if provider == "github_copilot":
+        # For GitHub Copilot: use aggressive backoff to avoid hitting rate limits
+        # Start with 5s and increase more rapidly
+        base_delay = max(5.0, settings.base_delay)
+        step_increase = max(2.5, settings.step_increase)
+        max_delay = max(60.0, settings.max_delay)
+    else:
+        base_delay = settings.base_delay
+        step_increase = settings.step_increase
+        max_delay = settings.max_delay
+    
     # Calculate base exponential backoff
-    delay = min(
-        settings.max_delay, settings.base_delay * (settings.step_increase**retry_count)
-    )
+    delay = min(max_delay, base_delay * (step_increase ** retry_count))
 
     # Add jitter to avoid thundering herd problem
     jitter = random.uniform(1 - settings.jitter_factor, 1 + settings.jitter_factor)
 
     # Ensure we stay within our bounds
-    final_delay = max(settings.min_delay, min(settings.max_delay, delay * jitter))
+    final_delay = max(settings.min_delay, min(max_delay, delay * jitter))
 
     return final_delay
 
@@ -189,9 +207,9 @@ def custom_litellm_retry_handler(retry_count: int, exception: Exception) -> bool
         # If it's not a recoverable error, don't retry
         return False
 
-    delay = calculate_backoff_time(retry_count, settings)
-
     provider = identify_provider_from_error(exception)
+    delay = calculate_backoff_time(retry_count, settings, provider)
+
     logger.warning(
         f"{provider.capitalize()} API error: {str(exception)}. "
         f"Retry {retry_count}/{settings.max_retries}, "
@@ -237,7 +255,7 @@ def robust_llm_call(settings: Optional[RetrySettings] = None):
                         )
                         raise
 
-                    delay = calculate_backoff_time(retries, settings)
+                    delay = calculate_backoff_time(retries, settings, provider)
 
                     logger.warning(
                         f"{provider.capitalize()} API error: {str(e)}. "
@@ -532,6 +550,7 @@ class ProviderService:
         litellm.modify_params = True
         instance.db = db
         instance.user_id = user_id
+        instance._api_key_cache: Dict[str, Optional[str]] = {}
 
         resolved_chat_model = (
             chat_model or f"{provider}/gpt-4o"
@@ -702,6 +721,23 @@ class ProviderService:
             )
         if config.api_version:
             params["api_version"] = config.api_version
+
+        # Add GitHub Copilot headers if needed
+        if config.auth_provider == "github_copilot":
+            extra_headers = {
+                "Editor-Version": "vscode/1.85.1",
+                "Copilot-Integration-Id": "vscode-chat",
+            }
+            # Merge with any headers from environment
+            import json as _json
+            raw_headers = os.environ.get("LLM_EXTRA_HEADERS")
+            if raw_headers:
+                try:
+                    env_headers = _json.loads(raw_headers)
+                    extra_headers.update(env_headers)
+                except Exception:
+                    pass
+            params["extra_headers"] = extra_headers
 
         # Filter out falsy values litellm would not expect
         return {key: value for key, value in params.items() if value is not None}
@@ -942,7 +978,7 @@ class ProviderService:
 
         request_kwargs = {
             key: params[key]
-            for key in ("api_key", "base_url", "api_version")
+            for key in ("api_key", "base_url", "api_version", "extra_headers")
             if key in params
         }
 
@@ -1305,7 +1341,7 @@ class ProviderService:
         if not api_key:
             api_key = os.environ.get("LLM_API_KEY", api_key)
 
-        if not api_key and config.auth_provider not in {"ollama"}:
+        if not api_key and config.auth_provider not in {"ollama", "github_copilot"}:
             raise UnsupportedProviderError(
                 f"API key not found for provider '{config.auth_provider}'."
             )
@@ -1325,7 +1361,7 @@ class ProviderService:
         if config.api_version:
             provider_kwargs["api_version"] = config.api_version
 
-        openai_like_providers = {"openai", "openrouter", "azure", "ollama"}
+        openai_like_providers = {"openai", "openrouter", "azure", "ollama", "github_copilot"}
         if config.auth_provider in openai_like_providers:
             if config.auth_provider == "ollama":
                 base_url_root = (
@@ -1334,6 +1370,18 @@ class ProviderService:
                     or "http://localhost:11434"
                 )
                 provider_kwargs["base_url"] = base_url_root.rstrip("/") + "/v1"
+            if config.auth_provider == "github_copilot":
+                # Route through LiteLLM which handles OAuth natively
+                import json as _json
+                from app.modules.intelligence.provider.litellm_model import LiteLLMModel
+                extra_headers = {}
+                raw_headers = os.environ.get("LLM_EXTRA_HEADERS")
+                if raw_headers:
+                    try:
+                        extra_headers = _json.loads(raw_headers)
+                    except Exception:
+                        pass
+                return LiteLLMModel(target_model, extra_headers)
             model_class = (
                 OpenRouterGeminiModel
                 if config.auth_provider == "openrouter" and config.provider == "gemini"

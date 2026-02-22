@@ -1,5 +1,7 @@
 """Agent factory for creating supervisor and delegate agents"""
 
+import functools
+import inspect
 from typing import List, Dict, Callable, Any
 from pydantic_ai import Agent, Tool
 from pydantic_ai.mcp import MCPServerStreamableHTTP
@@ -553,8 +555,10 @@ Subagents DON'T get your history. Provide comprehensive context:
     def create_delegate_agent(self, agent_type: AgentType, ctx: ChatContext) -> Agent:
         """Create a delegate agent - either generic (THINK_EXECUTE) or integration-specific"""
         # Cache key includes conversation_id to ensure context-specific agents are not reused
-        cache_key = (agent_type, ctx.curr_agent_id)
+        # Include project_id in cache key to ensure proper tool binding per project
+        cache_key = (agent_type, ctx.curr_agent_id, ctx.project_id)
         if cache_key in self._agent_instances:
+            logger.info(f"Using cached delegate agent for {agent_type} (project: {ctx.project_id})")
             return self._agent_instances[cache_key]
 
         # Determine if this is an integration agent
@@ -574,9 +578,39 @@ Subagents DON'T get your history. Provide comprehensive context:
             tools = self.build_delegate_agent_tools()
             instructions = DELEGATE_AGENT_INSTRUCTIONS
 
+        # Pre-bind project_id to tools that need it (to avoid LLM hallucination)
+        import functools
+        import inspect
+        from pydantic_ai import Tool as PydanticTool
+        
+        pydantic_tools = []
+        for tool in tools:
+            tool_func = tool.function
+            
+            # Check if the tool has a project_id parameter
+            sig = inspect.signature(tool_func)
+            if "project_id" in sig.parameters:
+                # Pre-bind project_id from context to avoid LLM hallucination
+                # Use a wrapper to preserve function attributes properly
+                def create_wrapper(func, proj_id):
+                    def wrapper(*args, **kwargs):
+                        return func(*args, project_id=proj_id, **kwargs)
+                    wrapper.__name__ = func.__name__
+                    wrapper.__doc__ = func.__doc__
+                    return wrapper
+                tool_func = create_wrapper(tool_func, ctx.project_id)
+            
+            pydantic_tools.append(
+                PydanticTool(
+                    name=tool.name,
+                    description=tool.description,
+                    function=tool_func,
+                )
+            )
+        
         agent = Agent(
             model=self.llm_provider.get_pydantic_model(),
-            tools=tools,
+            tools=pydantic_tools,
             # NOTE: Subagents don't use MCP servers - they're focused workers that don't need them
             # Instructions are specialized for integration agents, generic for THINK_EXECUTE
             instructions=instructions,
@@ -594,10 +628,8 @@ Subagents DON'T get your history. Provide comprehensive context:
 
     def create_supervisor_agent(self, ctx: ChatContext, config: AgentConfig) -> Agent:
         """Create the supervisor agent that coordinates other agents"""
-        # Cache key includes conversation_id to ensure context-specific instructions are not reused
-        conversation_id = ctx.curr_agent_id
-        if conversation_id in self._supervisor_agents:
-            return self._supervisor_agents[conversation_id]
+        # NOTE: Do NOT cache the supervisor agent — instructions embed ctx.additional_context
+        # (file structure, node code) which changes per request. Caching would cause stale context.
 
         # Prepare multimodal instructions if images are present
         multimodal_instructions = prepare_multimodal_instructions(ctx)
@@ -614,9 +646,29 @@ Subagents DON'T get your history. Provide comprehensive context:
             supervisor_task_description=supervisor_task_description,
         )
 
+        # Pre-bind project_id to supervisor tools that need it
+        supervisor_tools = []
+        for tool in self.build_supervisor_agent_tools():
+            tool_func = tool.function
+            sig = inspect.signature(tool_func)
+            if "project_id" in sig.parameters:
+                def create_wrapper(func, proj_id):
+                    @functools.wraps(func)
+                    def wrapper(*args, **kwargs):
+                        return func(*args, project_id=proj_id, **kwargs)
+                    orig_hints = {k: v for k, v in (func.__annotations__ or {}).items() if k != "project_id"}
+                    wrapper.__annotations__ = orig_hints
+                    orig_params = {k: v for k, v in inspect.signature(func).parameters.items() if k != "project_id"}
+                    wrapper.__signature__ = inspect.signature(func).replace(parameters=list(orig_params.values()))
+                    return wrapper
+                tool_func = create_wrapper(tool_func, ctx.project_id)
+                supervisor_tools.append(Tool(name=tool.name, description=tool.description, function=tool_func))
+            else:
+                supervisor_tools.append(tool)
+
         supervisor_agent = Agent(
             model=self.llm_provider.get_pydantic_model(),
-            tools=self.build_supervisor_agent_tools(),
+            tools=supervisor_tools,
             mcp_servers=self.create_mcp_servers(),
             instrument=True,
             instructions=instructions,
@@ -626,7 +678,6 @@ Subagents DON'T get your history. Provide comprehensive context:
             end_strategy="exhaustive",
             history_processors=[self.history_processor],
         )
-        self._supervisor_agents[conversation_id] = supervisor_agent
         return supervisor_agent
 
 

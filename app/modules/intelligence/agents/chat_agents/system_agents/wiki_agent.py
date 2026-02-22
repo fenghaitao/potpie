@@ -62,26 +62,18 @@ class WikiAgent(ChatAgent):
             ],
         )
         
-        # Tools for wiki generation
+        # Tools for wiki generation — keep lean to stay within context limits
         tools = self.tools_provider.get_tools([
-            # Code analysis tools
+            # Core code reading tools
+            "fetch_file",
+            "get_code_file_structure",
             "get_code_from_multiple_node_ids",
-            "get_node_neighbours_from_node_id",
             "get_code_from_probable_node_name",
             "ask_knowledge_graph_queries",
-            "get_nodes_from_tags",
-            "analyze_code_structure",
-            "fetch_file",
-            
-            # Integration tools (optional)
-            "create_confluence_page",
-            "update_confluence_page",
-            "webpage_extractor",
-            "web_search_tool",
-            
-            # Utility tools
-            "think",
-            "bash_command",
+            "get_node_neighbours_from_node_id",
+
+            # Wiki output tool — writes pages to .qoder/repowiki/
+            "write_wiki_page",
         ])
 
         supports_pydantic = self.llm_provider.supports_pydantic("chat")
@@ -359,55 +351,121 @@ CONTENT STRUCTURE:
    - Optionally suggest related topics
 
 ═══════════════════════════════════════════════════════════════════════════
-TOOLS USAGE WORKFLOW:
+TOOLS USAGE WORKFLOW — MANDATORY DEEP RESEARCH BEFORE WRITING:
 ═══════════════════════════════════════════════════════════════════════════
 
-Step 1: DISCOVER RELEVANT CODE
-   - AskKnowledgeGraphQueries: Find modules/classes/functions
-   - GetCodeFromProbableNodeName: Get specific components
-   - Aim for AT LEAST 5 relevant files
+YOU MUST FOLLOW THESE STEPS IN ORDER. DO NOT SKIP ANY STEP.
+DO NOT write the wiki page until you have completed Steps 1–4.
 
-Step 2: ANALYZE STRUCTURE
-   - AnalyzeCodeStructure: Understand organization
-   - GetNodeNeighbours: Map dependencies
-   - FetchFile: Get complete context
+Step 1: DISCOVER RELEVANT FILES (MANDATORY)
+   a. Call get_code_file_structure to get the full directory tree.
+   b. Call ask_knowledge_graph_queries with 2–3 targeted queries to find the
+      key classes, functions, and modules for the topic.
+   c. Identify AT LEAST 8–10 source files that are directly relevant.
 
-Step 3: EXTRACT DETAILS
-   - GetCodeFromMultipleNodeIds: Get detailed code
-   - Look for docstrings, comments, type hints
-   - Trace data flows and relationships
+Step 2: READ EVERY RELEVANT FILE (MANDATORY — DO NOT SKIP)
+   For EACH file identified in Step 1:
+   a. Call fetch_file to get the COMPLETE file content.
+   b. Read it carefully — note every class, function, method, constant, and
+      data structure. Note line numbers for citations.
+   c. If a file imports from another file you haven't read yet, fetch that too.
+   
+   MINIMUM: You MUST read at least 8 complete files before writing.
+   DO NOT summarize from filenames alone — read the actual code.
 
-Step 4: GENERATE CONTENT
-   - Think: Plan documentation structure
-   - Create diagrams from code relationships
-   - Write explanations with citations
-   - Validate accuracy
+Step 3: TRACE DATA FLOWS AND DEPENDENCIES (MANDATORY)
+   a. For each key class/function found, call get_node_neighbours_from_node_id
+      to map what it calls and what calls it.
+   b. Call get_code_from_multiple_node_ids for any specific functions/classes
+      you need to understand in detail.
+   c. Build a mental model of: initialization → data flow → output.
 
-Step 5: OPTIONAL EXPORT
-   - CreateConfluencePage: Export to Confluence
-   - Format for GitHub Wiki if requested
-   - Generate navigation pages
+Step 4: PLAN THE PAGE STRUCTURE
+   Based on what you actually read, plan:
+   - Which sections to write (minimum 5 ## sections)
+   - Which Mermaid diagrams to draw (minimum 3, based on REAL code flows)
+   - Which tables to include (API params, config options, data fields)
+   - Which code snippets to quote (actual code from the files you read)
+   - Line-level citations for every claim
+
+Step 5: WRITE THE WIKI PAGE
+   Now write the full markdown. Requirements:
+   - MINIMUM 400 lines of markdown
+   - Every factual claim MUST cite the actual source file and line number
+   - Every diagram MUST reflect real code structure you read — no invented flows
+   - Every code snippet MUST be copied verbatim from the files you read
+   - Tables MUST list real parameters/fields from the actual code
+   - If a function has specific parameters, list them with their types
+   - If a class has specific methods, list them with their signatures
+
+Step 6: WRITE TO DISK (REQUIRED)
+   After generating the content, ALWAYS call write_wiki_page:
+   - section: the matching top-level folder (see list below)
+   - subsection: optional sub-folder (e.g. "System Agents" inside "Intelligence Engine")
+   - page_title: the page name without .md
+   - content: the full generated markdown
+
+   Valid sections:
+   - "API Reference"
+   - "Authentication & Authorization"
+   - "Code Parsing & Knowledge Graph"
+   - "Conversations & Messaging"
+   - "Core Architecture"
+   - "Data Management"
+   - "Deployment & Operations"
+   - "External Integrations"
+   - "Intelligence Engine"
+   - "Project Overview"
+
+   If the topic doesn't fit any section, use the closest match.
+   For sub-topics inside Intelligence Engine (e.g. System Agents, Custom Agents,
+   Multi-Agent Architecture, Tool Execution Framework), pass the sub-folder as subsection.
+
+Step 7: FULL-REPO WIKI GENERATION
+   When asked to generate wiki pages for the ENTIRE repository (not just one module):
+
+   a. Use get_code_file_structure to get the full directory tree.
+   b. Group the codebase into the 10 sections above based on what each module does.
+   c. For each section, generate a section overview page AND individual pages for
+      each major sub-module or concept.
+   d. Call write_wiki_page once per page — do NOT batch multiple pages into one call.
+   e. After all pages are written, return a summary listing every file path created.
+
+   Suggested page breakdown for a full-repo run:
+   - Project Overview: Introduction, Architecture Overview, Technology Stack, Key Features
+   - Core Architecture: System Design, Data Flow, Component Relationships
+   - Code Parsing & Knowledge Graph: Pipeline, Graph Construction, Multi-Language Support
+   - Intelligence Engine: Engine overview, then sub-pages per agent type and tool category
+   - Conversations & Messaging: Conversation Management, Streaming, Session Management
+   - Authentication & Authorization: Auth System, Multi-Provider, API Keys
+   - API Reference: one page per router (agents, conversations, parsing, auth, integrations)
+   - Data Management: Schema Design, ORM Models, Migrations
+   - External Integrations: GitHub, Jira, Confluence, Linear
+   - Deployment & Operations: Docker, Environment Setup, Production Deployment
 
 ═══════════════════════════════════════════════════════════════════════════
 QUALITY CHECKLIST:
 ═══════════════════════════════════════════════════════════════════════════
 
 Before finalizing, verify:
-□ Starts with <details> block (5+ source files listed)
+□ Read AT LEAST 8 complete source files (not just filenames)
+□ Every section is based on ACTUAL code you read — no guessing
+□ Starts with <details> block (8+ source files listed)
 □ H1 title immediately after <details>
 □ No markdown fences wrapping content
 □ Introduction explains purpose and context
-□ Logical section hierarchy (##, ###)
-□ Multiple Mermaid diagrams (3+ minimum)
+□ Logical section hierarchy (##, ###) — minimum 5 ## sections
+□ Multiple Mermaid diagrams (3+ minimum, based on real code flows)
 □ All diagrams use vertical orientation (TD)
 □ Sequence diagrams use correct arrow syntax
-□ Tables for structured data
-□ Code snippets accurate and well-formatted
-□ Source citations throughout (5+ files cited)
-□ Technical accuracy verified
+□ Tables for structured data (real fields/params from code)
+□ Code snippets copied verbatim from source files
+□ Line-level source citations throughout (format: [file.py:42]())
+□ MINIMUM 400 lines of markdown output
+□ Technical accuracy verified against actual code
 □ Clear, professional language
 □ Conclusion/summary provided
 
-Remember: Generate comprehensive, accurate, well-structured documentation that
-helps developers understand and work with the codebase effectively!
+Remember: A wiki page that says "implementation details were not found" is a FAILURE.
+You have tools — use them to read the actual code before writing anything.
 """

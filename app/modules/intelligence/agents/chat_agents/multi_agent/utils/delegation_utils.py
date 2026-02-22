@@ -160,6 +160,13 @@ def create_delegation_prompt(
 **AVAILABLE CONTEXT:**
 {full_context}
 
+**🚨 CRITICAL PROJECT ID INSTRUCTION:**
+When calling ANY tool that requires a project_id parameter, you MUST use the EXACT project_id from the PROJECT context above.
+- DO NOT generate, invent, or hallucinate project IDs
+- DO NOT use random UUIDs
+- COPY the exact project_id value from the PROJECT section above
+- If no project_id is shown above, ask the supervisor to provide it
+
 **IMPORTANT - YOU ARE ISOLATED:**
 - You do NOT have access to the supervisor's conversation history
 - You do NOT see previous tool calls or their results
