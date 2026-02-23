@@ -84,11 +84,11 @@ def parse():
 
 @parse.command(name="repo")
 @click.argument('repo_path', type=click.Path(exists=True))
-@click.option('--branch', '-b', default='main', help='Branch name')
+@click.option('--branch', '-b', default=None, help='Branch name (defaults to current git branch)')
 @click.option('--user-id', '-u', default=None, help='User ID (defaults to cli-user)')
 @click.option('--cleanup/--no-cleanup', default=True, help='Clean up existing graph')
 @click.option('--watch', '-w', is_flag=True, help='Watch for changes and re-parse')
-def parse_repo(repo_path: str, branch: str, user_id: Optional[str], cleanup: bool, watch: bool):
+def parse_repo(repo_path: str, branch: Optional[str], user_id: Optional[str], cleanup: bool, watch: bool):
     """
     Parse a repository and build its knowledge graph.
     
@@ -97,6 +97,13 @@ def parse_repo(repo_path: str, branch: str, user_id: Optional[str], cleanup: boo
         potpie parse repo ~/code/app --branch develop
         potpie parse repo . --no-cleanup
     """
+    # Auto-detect current git branch if not specified
+    if branch is None:
+        try:
+            from git import Repo as GitRepo
+            branch = GitRepo(repo_path).active_branch.name
+        except Exception:
+            branch = 'main'
     asyncio.run(_parse_repo(repo_path, branch, user_id or ctx_obj.default_user_id, cleanup, watch))
 
 
