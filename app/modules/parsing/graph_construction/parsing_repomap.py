@@ -642,6 +642,16 @@ class RepoMap:
                         name=rel_path.split("/")[-1],
                     )
 
+                # Pre-parse the file with tree-sitter so we can look up full node extents
+                _ts_root = None
+                _ts_lang = filename_to_lang(file_path)
+                if _ts_lang:
+                    try:
+                        _ts_parser = get_parser(_ts_lang)
+                        _ts_root = _ts_parser.parse(bytes(file_text, "utf-8")).root_node
+                    except Exception:
+                        _ts_root = None
+
                 current_class = None
                 current_method = None
 
@@ -668,9 +678,16 @@ class RepoMap:
                         else:
                             node_name = f"{rel_path}:{tag.name}"
 
-                        # Extract source text for this symbol using line range from tag
-                        if tag.line >= 0 and tag.end_line >= tag.line:
-                            node_text = "\n".join(file_lines[tag.line : tag.end_line + 1])
+                        # Extract full source text using tree-sitter AST extent when available
+                        if tag.line >= 0:
+                            actual_end_line = tag.line  # fallback: just the name line
+                            if _ts_root is not None:
+                                ts_node = RepoMap.find_node_by_range(
+                                    _ts_root, tag.line, node_type
+                                )
+                                if ts_node is not None:
+                                    actual_end_line = ts_node.end_point[0]
+                            node_text = "\n".join(file_lines[tag.line : actual_end_line + 1])
                         else:
                             node_text = ""
 
