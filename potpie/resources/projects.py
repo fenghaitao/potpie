@@ -53,8 +53,12 @@ class ProjectResource(BaseResource):
         branch_name: str,
         repo_path: Optional[str] = None,
     ) -> str:
-        """Generate a deterministic project ID."""
-        return str(uuid7())
+        """Generate a deterministic project ID from repo identity."""
+        import hashlib
+        from uuid import UUID
+        key = f"{user_id}:{repo_name}:{branch_name}:{repo_path or ''}"
+        digest = hashlib.md5(key.encode()).hexdigest()
+        return str(UUID(digest))
 
     async def register(
         self,
