@@ -151,6 +151,22 @@ class ParseHelper:
             "wmv",
             "flv",
             "ipynb",
+            # compiled / binary artifacts
+            "pyc",
+            "pyo",
+            "pyd",
+            "so",
+            "o",
+            "a",
+            "lib",
+            "dll",
+            "exe",
+            "class",  # Java bytecode
+            "jar",
+            "war",
+            "wasm",
+            "bin",
+            "lock",   # lockfiles (uv.lock, package-lock.json, etc.) are noise
         ]
         include_extensions = [
             "py",
