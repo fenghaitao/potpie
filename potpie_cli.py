@@ -116,14 +116,17 @@ async def _parse_repo(repo_path: str, branch: str, user_id: str, cleanup: bool, 
         repo_path = str(Path(repo_path).expanduser().resolve())
         repo_name = Path(repo_path).name
 
-        # Auto-detect current HEAD commit for change detection (skip if --force)
+        # Auto-detect current HEAD commit for change detection
         commit_id = None
-        if not force:
-            try:
-                from git import Repo as GitRepo
-                commit_id = GitRepo(repo_path).head.commit.hexsha
-            except Exception:
-                pass
+        try:
+            from git import Repo as GitRepo
+            commit_id = GitRepo(repo_path).head.commit.hexsha
+        except Exception:
+            pass
+
+        # --force: bypass commit change detection by not passing commit_id to register
+        # but we still store it after parsing so subsequent runs can detect changes
+        register_commit_id = None if force else commit_id
         
         console.print(Panel.fit(
             f"[bold cyan]Repository:[/bold cyan] {repo_name}\n"
@@ -148,7 +151,7 @@ async def _parse_repo(repo_path: str, branch: str, user_id: str, cleanup: bool, 
                 branch_name=branch,
                 user_id=user_id,
                 repo_path=repo_path,
-                commit_id=commit_id,
+                commit_id=register_commit_id,
             )
             
             progress.update(task1, completed=True)
@@ -166,6 +169,19 @@ async def _parse_repo(repo_path: str, branch: str, user_id: str, cleanup: bool, 
                 user_email=f"{user_id}@cli.local",
                 cleanup_graph=cleanup,
             )
+
+            # After a forced reparse, update the stored commit_id so future runs
+            # can correctly detect whether HEAD has changed
+            if force and commit_id:
+                try:
+                    from app.modules.projects.projects_service import ProjectService
+                    from app.core.database import get_db
+                    db = next(get_db())
+                    ProjectService.update_project(db, project_id, commit_id=commit_id)
+                    db.commit()
+                    db.close()
+                except Exception:
+                    pass  # Non-critical
             
             progress.update(task2, completed=True)
         
