@@ -83,6 +83,16 @@ Replace the name-matching loop in `parsing_repomap.py` with SCIP-derived edges:
 This gives accurate `FUNCTION → FUNCTION` edges that respect class scope,
 replacing the current ~15k name-matched edges with precise call graph edges.
 
+## Updating scip.proto
+
+`scip.proto` is committed from the [sourcegraph/scip](https://github.com/sourcegraph/scip) repo.
+To update it to a newer version:
+
+```bash
+curl -sL https://raw.githubusercontent.com/sourcegraph/scip/main/scip.proto -o scip/scip.proto
+bash scip/generate_pb2.sh   # regenerate bindings
+```
+
 ## Files
 
 | File | Purpose |
