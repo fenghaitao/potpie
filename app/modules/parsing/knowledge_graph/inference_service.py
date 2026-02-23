@@ -377,7 +377,7 @@ class InferenceService:
     def batch_nodes(
         self,
         nodes: List[Dict],
-        max_tokens: int = 16000,
+        max_tokens: int = 8000,  # input budget per batch; output needs equal headroom
         model: str = "gpt-4",
         project_id: Optional[str] = None,
     ) -> List[List[DocstringRequest]]:
