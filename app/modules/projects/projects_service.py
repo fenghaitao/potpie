@@ -117,7 +117,8 @@ class ProjectService:
             existing_project.repo_name = repo_name
             existing_project.branch_name = branch_name
             existing_project.repo_path = repo_path
-            existing_project.commit_id = commit_id
+            # Don't overwrite commit_id here — it's used by check_commit_status to detect
+            # whether a reparse is needed. It gets updated after a successful parse.
             existing_project.status = ProjectStatusEnum.SUBMITTED.value
             existing_project.updated_at = datetime.utcnow()
             try:

@@ -361,6 +361,12 @@ class ParsingService:
                 await self.project_service.update_project_status(
                     project_id, ProjectStatusEnum.READY
                 )
+                # Update commit_id after successful parse so change detection works on next run
+                if repo_details.commit_id:
+                    ProjectService.update_project(
+                        self.db, project_id, commit_id=repo_details.commit_id
+                    )
+                    self.db.commit()
                 if not self._raise_library_exceptions and user_email:
                     create_task(
                         EmailHelper().send_email(user_email, repo_name, branch_name)

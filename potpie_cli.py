@@ -169,19 +169,6 @@ async def _parse_repo(repo_path: str, branch: str, user_id: str, cleanup: bool, 
                 user_email=f"{user_id}@cli.local",
                 cleanup_graph=cleanup,
             )
-
-            # After a forced reparse, update the stored commit_id so future runs
-            # can correctly detect whether HEAD has changed
-            if force and commit_id:
-                try:
-                    from app.modules.projects.projects_service import ProjectService
-                    from app.core.database import get_db
-                    db = next(get_db())
-                    ProjectService.update_project(db, project_id, commit_id=commit_id)
-                    db.commit()
-                    db.close()
-                except Exception:
-                    pass  # Non-critical
             
             progress.update(task2, completed=True)
         
