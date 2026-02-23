@@ -206,7 +206,8 @@ class ParsingService:
                         language = self.parse_helper.detect_repo_language(extracted_dir)
 
                 await self.analyze_directory(
-                    extracted_dir, project_id, user_id, self.db, language, user_email
+                    extracted_dir, project_id, user_id, self.db, language, user_email,
+                    commit_id=repo_details.commit_id,
                 )
                 message = "The project has been parsed successfully"
                 return {"message": message, "id": project_id}
@@ -304,6 +305,7 @@ class ParsingService:
         db,
         language: str,
         user_email: str,
+        commit_id: str = None,
     ):
         logger.info(
             f"ParsingService: Parsing project {project_id}: Analyzing directory: {extracted_dir}"
@@ -362,9 +364,9 @@ class ParsingService:
                     project_id, ProjectStatusEnum.READY
                 )
                 # Update commit_id after successful parse so change detection works on next run
-                if repo_details.commit_id:
+                if commit_id:
                     ProjectService.update_project(
-                        self.db, project_id, commit_id=repo_details.commit_id
+                        self.db, project_id, commit_id=commit_id
                     )
                     self.db.commit()
                 if not self._raise_library_exceptions and user_email:

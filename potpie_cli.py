@@ -168,6 +168,7 @@ async def _parse_repo(repo_path: str, branch: str, user_id: str, cleanup: bool, 
                 user_id=user_id,
                 user_email=f"{user_id}@cli.local",
                 cleanup_graph=cleanup,
+                commit_id=register_commit_id,
             )
             
             progress.update(task2, completed=True)
