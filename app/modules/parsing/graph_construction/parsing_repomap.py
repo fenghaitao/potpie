@@ -629,12 +629,14 @@ class RepoMap:
 
                 # Add file node
                 file_node_name = rel_path
+                file_text = self.io.read_text(file_path) or ""
+                file_lines = file_text.splitlines()
                 if not G.has_node(file_node_name):
                     G.add_node(
                         file_node_name,
                         file=rel_path,
                         type="FILE",
-                        text=self.io.read_text(file_path) or "",
+                        text=file_text,
                         line=0,
                         end_line=0,
                         name=rel_path.split("/")[-1],
@@ -666,6 +668,12 @@ class RepoMap:
                         else:
                             node_name = f"{rel_path}:{tag.name}"
 
+                        # Extract source text for this symbol using line range from tag
+                        if tag.line >= 0 and tag.end_line >= tag.line:
+                            node_text = "\n".join(file_lines[tag.line : tag.end_line + 1])
+                        else:
+                            node_text = ""
+
                         # Add node
                         if not G.has_node(node_name):
                             G.add_node(
@@ -676,6 +684,7 @@ class RepoMap:
                                 type=node_type,
                                 name=tag.name,
                                 class_name=current_class,
+                                text=node_text,
                             )
 
                             # Add CONTAINS relationship from file
