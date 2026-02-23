@@ -854,11 +854,15 @@ class InferenceService:
                         response = await self.generate_response(batch, repo_id)
 
                     if isinstance(response, DocstringResponse):
+                        # Build lookup by node_id for correct matching (not positional zip)
+                        response_by_id = {d.node_id: d for d in response.docstrings}
+
                         # Store results in cache and Neo4j
-                        for request, docstring_result in zip(
-                            batch, response.docstrings
-                        ):
+                        for request in batch:
                             metadata = request.metadata or {}
+                            docstring_result = response_by_id.get(request.node_id)
+                            if docstring_result is None:
+                                continue
 
                             # Store in cache if eligible
                             if (
@@ -896,6 +900,13 @@ class InferenceService:
                             self.update_neo4j_with_docstrings(
                                 repo_id, processed_response
                             )
+
+                        # Generate fallback docstrings for nodes the LLM skipped
+                        returned_ids = {d.node_id for d in response.docstrings}
+                        skipped = [req for req in batch if req.node_id not in returned_ids]
+                        if skipped:
+                            logger.debug(f"Batch {batch_index}: LLM skipped {len(skipped)} nodes, generating fallback docstrings")
+                            self._write_fallback_docstrings(repo_id, skipped)
 
                     return response
 
@@ -1070,6 +1081,24 @@ class InferenceService:
             )
 
         logger.debug(f"Updated Neo4j with cached inference for node {node['node_id']}")
+
+    def _write_fallback_docstrings(self, repo_id: str, skipped_requests: List[DocstringRequest]) -> None:
+        """Write minimal fallback docstrings for nodes the LLM skipped (e.g. short stubs)."""
+        from app.modules.parsing.knowledge_graph.inference_schema import DocstringNode
+
+        fallback_docstrings = []
+        for req in skipped_requests:
+            # Extract a readable name from the text (first non-empty line)
+            first_line = (req.text or "").strip().splitlines()[0] if req.text else ""
+            docstring = f"Code stub: {first_line}" if first_line else "Code stub."
+            fallback_docstrings.append(
+                DocstringNode(node_id=req.node_id, docstring=docstring, tags=["UTILITY"])
+            )
+
+        if fallback_docstrings:
+            self.update_neo4j_with_docstrings(
+                repo_id, DocstringResponse(docstrings=fallback_docstrings)
+            )
 
     def update_neo4j_with_docstrings(self, repo_id: str, docstrings: DocstringResponse):
         with self.driver.session() as session:
