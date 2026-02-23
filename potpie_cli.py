@@ -113,11 +113,20 @@ async def _parse_repo(repo_path: str, branch: str, user_id: str, cleanup: bool, 
         runtime = await ctx_obj.get_runtime()
         repo_path = str(Path(repo_path).expanduser().resolve())
         repo_name = Path(repo_path).name
+
+        # Auto-detect current HEAD commit for change detection
+        commit_id = None
+        try:
+            from git import Repo as GitRepo
+            commit_id = GitRepo(repo_path).head.commit.hexsha
+        except Exception:
+            pass
         
         console.print(Panel.fit(
             f"[bold cyan]Repository:[/bold cyan] {repo_name}\n"
             f"[bold cyan]Path:[/bold cyan] {repo_path}\n"
             f"[bold cyan]Branch:[/bold cyan] {branch}\n"
+            f"[bold cyan]Commit:[/bold cyan] {commit_id[:12] if commit_id else 'unknown'}\n"
             f"[bold cyan]Cleanup:[/bold cyan] {'Yes' if cleanup else 'No'}",
             title="🔨 Parsing Configuration",
             border_style="cyan"
@@ -136,6 +145,7 @@ async def _parse_repo(repo_path: str, branch: str, user_id: str, cleanup: bool, 
                 branch_name=branch,
                 user_id=user_id,
                 repo_path=repo_path,
+                commit_id=commit_id,
             )
             
             progress.update(task1, completed=True)
