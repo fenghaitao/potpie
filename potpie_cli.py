@@ -88,7 +88,8 @@ def parse():
 @click.option('--user-id', '-u', default=None, help='User ID (defaults to cli-user)')
 @click.option('--cleanup/--no-cleanup', default=True, help='Clean up existing graph')
 @click.option('--watch', '-w', is_flag=True, help='Watch for changes and re-parse')
-def parse_repo(repo_path: str, branch: Optional[str], user_id: Optional[str], cleanup: bool, watch: bool):
+@click.option('--force', '-f', is_flag=True, help='Force reparse even if commit has not changed')
+def parse_repo(repo_path: str, branch: Optional[str], user_id: Optional[str], cleanup: bool, watch: bool, force: bool):
     """
     Parse a repository and build its knowledge graph.
     
@@ -96,6 +97,7 @@ def parse_repo(repo_path: str, branch: Optional[str], user_id: Optional[str], cl
         potpie parse repo /path/to/myproject
         potpie parse repo ~/code/app --branch develop
         potpie parse repo . --no-cleanup
+        potpie parse repo . --force
     """
     # Auto-detect current git branch if not specified
     if branch is None:
@@ -104,23 +106,24 @@ def parse_repo(repo_path: str, branch: Optional[str], user_id: Optional[str], cl
             branch = GitRepo(repo_path).active_branch.name
         except Exception:
             branch = 'main'
-    asyncio.run(_parse_repo(repo_path, branch, user_id or ctx_obj.default_user_id, cleanup, watch))
+    asyncio.run(_parse_repo(repo_path, branch, user_id or ctx_obj.default_user_id, cleanup, watch, force))
 
 
-async def _parse_repo(repo_path: str, branch: str, user_id: str, cleanup: bool, watch: bool):
+async def _parse_repo(repo_path: str, branch: str, user_id: str, cleanup: bool, watch: bool, force: bool = False):
     """Implementation of parse repo command."""
     try:
         runtime = await ctx_obj.get_runtime()
         repo_path = str(Path(repo_path).expanduser().resolve())
         repo_name = Path(repo_path).name
 
-        # Auto-detect current HEAD commit for change detection
+        # Auto-detect current HEAD commit for change detection (skip if --force)
         commit_id = None
-        try:
-            from git import Repo as GitRepo
-            commit_id = GitRepo(repo_path).head.commit.hexsha
-        except Exception:
-            pass
+        if not force:
+            try:
+                from git import Repo as GitRepo
+                commit_id = GitRepo(repo_path).head.commit.hexsha
+            except Exception:
+                pass
         
         console.print(Panel.fit(
             f"[bold cyan]Repository:[/bold cyan] {repo_name}\n"
