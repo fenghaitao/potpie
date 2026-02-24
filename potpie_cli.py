@@ -125,9 +125,6 @@ async def _parse_repo(repo_path: str, branch: str, user_id: str, cleanup: bool, 
             pass
 
         # --force: bypass commit change detection by not passing commit_id to register
-        # but we still store it after parsing so subsequent runs can detect changes
-        register_commit_id = None if force else commit_id
-        
         console.print(Panel.fit(
             f"[bold cyan]Repository:[/bold cyan] {repo_name}\n"
             f"[bold cyan]Path:[/bold cyan] {repo_path}\n"
@@ -151,7 +148,7 @@ async def _parse_repo(repo_path: str, branch: str, user_id: str, cleanup: bool, 
                 branch_name=branch,
                 user_id=user_id,
                 repo_path=repo_path,
-                commit_id=register_commit_id,
+                commit_id=commit_id,
             )
             
             progress.update(task1, completed=True)
@@ -168,7 +165,8 @@ async def _parse_repo(repo_path: str, branch: str, user_id: str, cleanup: bool, 
                 user_id=user_id,
                 user_email=f"{user_id}@cli.local",
                 cleanup_graph=cleanup,
-                commit_id=register_commit_id,
+                commit_id=commit_id,
+                force=force,
             )
             
             progress.update(task2, completed=True)
@@ -696,6 +694,21 @@ def remove_project_cmd(project_id: str, force: bool):
     asyncio.run(_remove_project(project_id, force))
 
 
+@projects.command(name="remove-all")
+@click.option('--user-id', '-u', help='Filter by user ID')
+@click.option('--force', '-f', is_flag=True, help='Skip confirmation prompt')
+def remove_all_projects_cmd(user_id: Optional[str], force: bool):
+    """
+    🗑️  Remove all projects and their associated data.
+    
+    Examples:
+        potpie projects remove-all
+        potpie projects remove-all --user-id <user-id>
+        potpie projects remove-all --force
+    """
+    asyncio.run(_remove_all_projects(user_id or ctx_obj.default_user_id, force))
+
+
 async def _remove_project(project_id: str, force: bool):
     """Remove a project implementation."""
     try:
@@ -747,6 +760,98 @@ async def _remove_project(project_id: str, force: bool):
                 with open(ctx_obj.config_file, 'w') as f:
                     yaml.dump(config, f)
                 console.print("[dim]Cleared from last used project cache.[/dim]")
+        
+    except click.Abort:
+        raise
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] {e}")
+        raise click.Abort()
+
+
+async def _remove_all_projects(user_id: str, force: bool):
+    """Remove all projects implementation."""
+    try:
+        runtime = await ctx_obj.get_runtime()
+        
+        # Get all projects for the user
+        projects = await runtime.projects.list(user_id=user_id)
+        
+        if not projects:
+            console.print("[yellow]No projects found to remove.[/yellow]")
+            return
+        
+        # Show what will be deleted
+        console.print(f"\n[bold red]Found {len(projects)} project(s) to remove:[/bold red]\n")
+        
+        table = Table(show_header=True, header_style="bold cyan", border_style="red")
+        table.add_column("Project ID", style="cyan", width=38)
+        table.add_column("Name", style="green", width=25)
+        table.add_column("Branch", style="blue", width=15)
+        table.add_column("Status", style="magenta", width=12)
+        
+        for project in projects:
+            status_emoji = {
+                "READY": "✅",
+                "SUBMITTED": "⏳",
+                "ERROR": "❌"
+            }.get(project.status.value, "❓")
+            
+            table.add_row(
+                project.id,
+                project.repo_name,
+                project.branch_name,
+                f"{status_emoji} {project.status.value}",
+            )
+        
+        console.print(table)
+        
+        # Confirm deletion unless --force is used
+        if not force:
+            console.print("\n[bold yellow]⚠️  Warning:[/bold yellow] This will delete ALL projects and their associated data from the knowledge graph.")
+            confirmation = console.input(f"[bold red]Type 'DELETE ALL' to confirm removal of {len(projects)} project(s):[/bold red] ")
+            
+            if confirmation != 'DELETE ALL':
+                console.print("[yellow]Deletion cancelled.[/yellow]")
+                return
+        
+        # Perform deletion
+        deleted_count = 0
+        failed_count = 0
+        
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console
+        ) as progress:
+            task = progress.add_task(f"[cyan]Deleting {len(projects)} project(s)...", total=len(projects))
+            
+            for project in projects:
+                try:
+                    await runtime.projects.delete(project.id)
+                    deleted_count += 1
+                    progress.update(task, advance=1, description=f"[cyan]Deleted {deleted_count}/{len(projects)} projects...")
+                except Exception as e:
+                    console.print(f"[bold red]Failed to delete project '{project.repo_name}':[/bold red] {e}")
+                    failed_count += 1
+                    progress.update(task, advance=1)
+        
+        # Summary
+        console.print(f"\n[bold green]✅ Successfully deleted {deleted_count} project(s)![/bold green]")
+        if failed_count > 0:
+            console.print(f"[bold red]❌ Failed to delete {failed_count} project(s).[/bold red]")
+        
+        # Clear last project from config
+        import yaml
+        ctx_obj.config_dir.mkdir(exist_ok=True)
+        config = {}
+        if ctx_obj.config_file.exists():
+            with open(ctx_obj.config_file) as f:
+                config = yaml.safe_load(f) or {}
+        if 'last_project' in config:
+            del config['last_project']
+            with open(ctx_obj.config_file, 'w') as f:
+                yaml.dump(config, f)
+            console.print("[dim]Cleared last used project cache.[/dim]")
         
     except click.Abort:
         raise

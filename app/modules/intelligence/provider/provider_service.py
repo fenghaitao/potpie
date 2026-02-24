@@ -4,6 +4,13 @@ from pydantic import BaseModel
 from pydantic_ai.models import Model
 from litellm import litellm, AsyncOpenAI, acompletion
 import instructor
+import httpx
+
+# Patch litellm default timeout before any client is created.
+# The connect timeout is critical for corporate proxies with SSL inspection.
+import litellm.llms.custom_httpx.http_handler as _http_handler
+_http_handler._DEFAULT_TIMEOUT = httpx.Timeout(timeout=60.0, connect=30.0)
+litellm.in_memory_llm_clients_cache.flush_cache()
 
 from app.core.config_provider import config_provider
 from app.modules.key_management.secret_manager import SecretManager
@@ -726,6 +733,7 @@ class ProviderService:
         if config.auth_provider == "github_copilot":
             extra_headers = {
                 "Editor-Version": "vscode/1.85.1",
+                "Editor-Plugin-Version": "copilot-chat/0.11.1",
                 "Copilot-Integration-Id": "vscode-chat",
             }
             # Merge with any headers from environment
