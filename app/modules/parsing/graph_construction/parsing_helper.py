@@ -167,6 +167,7 @@ class ParseHelper:
             "wasm",
             "bin",
             "lock",   # lockfiles (uv.lock, package-lock.json, etc.) are noise
+            "scip",   # SCIP code intelligence index — binary, not source
         ]
         include_extensions = [
             "py",
