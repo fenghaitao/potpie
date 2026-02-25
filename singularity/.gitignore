@@ -1,0 +1,7 @@
+# SIF binary files - built locally with 'singularity-compose build', not committed
+*.sif
+
+# Runtime data - content is ignored; directory structure is tracked via .keep files
+potpie-data/**
+!potpie-data/**/
+!potpie-data/**/.keep
