@@ -3,9 +3,16 @@
 #   POSTGRES_PORT=5433 ./up.sh
 #   REDIS_PORT=6380 SNG_NEO4J_BOLT_PORT=7688 SNG_NEO4J_HTTP_PORT=7475 ./up.sh
 
-SINGULARITY_COMPOSE=/nfs/site/disks/hfeng1_fw_01/coder/singularity-compose/.venv/bin/singularity-compose
+SINGULARITY_COMPOSE="$(cd "$(dirname "$0")" && pwd)/singularity-compose/.venv/bin/singularity-compose"
 
 cd "$(dirname "$0")"
+
+# Bootstrap singularity-compose venv on first use
+if [ ! -x "$SINGULARITY_COMPOSE" ]; then
+    echo "Setting up singularity-compose venv..."
+    python3 -m venv singularity-compose/.venv
+    singularity-compose/.venv/bin/pip install -e singularity-compose/
+fi
 
 export POSTGRES_PORT=${POSTGRES_PORT:-5432}
 export REDIS_PORT=${REDIS_PORT:-6379}

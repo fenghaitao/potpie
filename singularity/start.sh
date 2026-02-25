@@ -2,11 +2,10 @@
 set -e
 
 # Run from project root
+SINGULARITY_COMPOSE="$(cd "$(dirname "$0")" && pwd)/singularity-compose/.venv/bin/singularity-compose"
 cd "$(dirname "$0")/.."
 
 source .env
-
-SINGULARITY_COMPOSE=/nfs/site/disks/hfeng1_fw_01/coder/singularity-compose/.venv/bin/singularity-compose
 
 # Set up Service Account Credentials
 export GOOGLE_APPLICATION_CREDENTIALS="./service-account.json"
