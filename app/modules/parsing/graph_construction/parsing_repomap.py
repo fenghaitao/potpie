@@ -614,13 +614,39 @@ class RepoMap:
         references = defaultdict(set)
         seen_relationships = set()
 
+        # Load .gitignore patterns for filtering
+        _gitignore_spec = None
+        _gitignore_path = os.path.join(repo_dir, ".gitignore")
+        if os.path.exists(_gitignore_path):
+            try:
+                import pathspec
+                with open(_gitignore_path, "r", encoding="utf-8") as _f:
+                    _gitignore_spec = pathspec.PathSpec.from_lines(
+                        pathspec.patterns.GitWildMatchPattern, _f.read().splitlines()
+                    )
+            except Exception:
+                pass
+
         for root, dirs, files in os.walk(repo_dir):
             if any(part.startswith(".") for part in root.split(os.sep)):
                 continue
 
+            # Prune dirs in-place to skip gitignore-matched directories
+            if _gitignore_spec:
+                dirs[:] = [
+                    d for d in dirs
+                    if not _gitignore_spec.match_file(
+                        os.path.relpath(os.path.join(root, d), repo_dir) + "/"
+                    )
+                ]
+
             for file in files:
                 file_path = os.path.join(root, file)
                 rel_path = os.path.relpath(file_path, repo_dir)
+
+                # Skip files matching .gitignore patterns
+                if _gitignore_spec and _gitignore_spec.match_file(rel_path):
+                    continue
 
                 if not self.parse_helper.is_text_file(file_path):
                     continue

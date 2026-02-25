@@ -19,12 +19,30 @@ fi
 echo "Starting Singularity services..."
 bash singularity/up.sh
 
+# Fallback: explicitly start services if singularity-compose background: true did not launch them.
+# These are idempotent - safe to uncomment if services fail to start automatically.
+# echo "Starting postgres..."
+# singularity exec instance://postgres1 pg_ctl -D /var/lib/postgresql/data -l /var/lib/postgresql/data/postgres.log start 2>&1 || true
+# echo "Starting redis..."
+# singularity exec instance://redis1 redis-cli ping 2>/dev/null | grep -q PONG || \
+#   singularity exec instance://redis1 redis-server /data/redis-runtime.conf --daemonize yes 2>&1 || true
+# echo "Starting neo4j..."
+# singularity exec instance://neo4j1 neo4j start 2>&1 || true
+
 # Wait for postgres to be ready
 echo "Waiting for postgres to be ready..."
 until singularity exec instance://postgres1 psql -h /var/run/postgresql -U postgres -c "SELECT 1" postgres >/dev/null 2>&1; do
   echo "Postgres is unavailable - sleeping"
   sleep 2
 done
+
+# Wait for redis to be ready
+echo "Waiting for redis to be ready..."
+until singularity exec instance://redis1 redis-cli ping 2>/dev/null | grep -q PONG; do
+  echo "Redis is unavailable - sleeping"
+  sleep 2
+done
+echo "Redis is up"
 
 echo "Postgres is up - applying database migrations"
 

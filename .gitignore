@@ -85,3 +85,12 @@ worktrees/
 # SCIP generated files
 scip/scip_pb2.py
 *.scip
+
+# System network files (Singularity bind-mounts)
+singularity/etc.hosts
+singularity/resolv.conf
+
+
+# Singularity container images
+*.sif
+singularity/potpie-data/

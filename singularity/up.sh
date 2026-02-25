@@ -25,6 +25,10 @@ echo "  redis     -> :${REDIS_PORT}"
 echo "  neo4j     -> bolt::${SNG_NEO4J_BOLT_PORT}  http::${SNG_NEO4J_HTTP_PORT}"
 echo ""
 
+# Remove .gitignore placeholder so initdb can initialize the data dir on first run
+PG_DATA_DIR="$(dirname "$0")/potpie-data/postgres"
+rm -f "$PG_DATA_DIR/.gitignore"
+
 # Clean up stale postgres files if postgres is not actually running
 POSTMASTER_PID="$(dirname "$0")/potpie-data/postgres/postmaster.pid"
 PG_RUN_DIR="$(dirname "$0")/potpie-data/run/postgresql"
