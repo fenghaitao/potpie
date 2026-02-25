@@ -1,0 +1,41 @@
+version: "2.0"
+instances:
+
+  postgres:
+    image: docker://postgres:latest
+    volumes:
+      - ./potpie-data/postgres:/var/lib/postgresql/data
+      - ./potpie-data/run/postgresql:/var/run/postgresql
+      - ./env/postgres.sh:/.singularity.d/env/postgres.sh
+    network:
+      enable: false
+    run:
+      background: true
+
+  neo4j:
+    image: docker://neo4j:latest
+    volumes:
+      - ./potpie-data/neo4j/data:/data
+      - ./potpie-data/neo4j/logs:/logs
+      - ./potpie-data/run/neo4j:/var/run/neo4j
+      - ./env/neo4j.sh:/.singularity.d/env/neo4j.sh
+    network:
+      enable: false
+    depends_on:
+      - postgres
+    run:
+      background: true
+
+  redis:
+    image: docker://redis:latest
+    volumes:
+      - ./potpie-data/redis:/data
+      - ./potpie-data/run/redis:/var/run/redis
+      - ./env/redis.sh:/.singularity.d/env/redis.sh
+    network:
+      enable: false
+    depends_on:
+      - postgres
+    run:
+      background: true
+      args: "/data/redis-runtime.conf"
