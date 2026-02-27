@@ -134,10 +134,11 @@ class ParsingService:
                         "status": ProjectStatusEnum.INFERRING.value,
                     }
 
-                # Early check: if project already exists and is READY for this commit, skip parsing
+                # Early check: if project already exists and commit hasn't changed, skip parsing.
+                # Note: register_project resets status to SUBMITTED before we get here, so we
+                # cannot rely on status == READY. Instead, compare commit_ids directly.
                 if cleanup_graph and repo_details.commit_id and existing_project:
-                    already_ready = existing_project.get("status") == ProjectStatusEnum.READY.value
-                    is_latest = already_ready and await self.parse_helper.check_commit_status(
+                    is_latest = await self.parse_helper.check_commit_status(
                         str(project_id), requested_commit_id=repo_details.commit_id
                     )
                     if is_latest:
