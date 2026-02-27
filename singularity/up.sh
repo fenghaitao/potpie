@@ -49,6 +49,3 @@ if [ -f "$POSTMASTER_PID" ]; then
 fi
 
 $SINGULARITY_COMPOSE up "$@"
-
-# Restore .gitignore placeholder now that initdb has run (keeps the empty dir tracked in git)
-git checkout -- "$PG_DATA_DIR/.gitignore" 2>/dev/null || true

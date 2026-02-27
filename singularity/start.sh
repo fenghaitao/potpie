@@ -46,6 +46,9 @@ echo "Redis is up"
 
 echo "Postgres is up - applying database migrations"
 
+# Restore .gitignore placeholder now that initdb has completed
+git checkout -- singularity/potpie-data/postgres/.gitignore 2>/dev/null || true
+
 # Create momentum database if it doesn't exist
 echo "Ensuring database exists..."
 singularity exec instance://postgres1 psql -h /var/run/postgresql -U postgres -tc \
