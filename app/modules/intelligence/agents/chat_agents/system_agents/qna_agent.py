@@ -154,11 +154,13 @@ class QnAAgent(ChatAgent):
         return ctx
 
     async def run(self, ctx: ChatContext) -> ChatAgentResponse:
+        ctx = await self._enriched_context(ctx)
         return await self._build_agent(ctx).run(ctx)
 
     async def run_stream(
         self, ctx: ChatContext
     ) -> AsyncGenerator[ChatAgentResponse, None]:
+        ctx = await self._enriched_context(ctx)
         async for chunk in self._build_agent(ctx).run_stream(ctx):
             yield chunk
 

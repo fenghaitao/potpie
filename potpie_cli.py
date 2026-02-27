@@ -420,9 +420,9 @@ async def _ask(query: str, project_id: Optional[str], agent_id: str, render_mark
             project_id=project_id,
             project_name=project_info.repo_name,
             curr_agent_id=agent_id,
-            query=query,
+            query=f"[Codebase: {project_info.repo_name}, project_id: {project_id}] {query}",
             history=[],
-            user_id=ctx_obj.default_user_id
+            user_id=ctx_obj.default_user_id,
         )
         
         with console.status("[bold cyan]Agent is thinking...", spinner="dots"):

@@ -299,9 +299,18 @@ class ProviderWrapper:
                     f"Tunnel provider failed: {e}, falling back to other providers"
                 )
 
+        # Auto-detect local paths — RepoManagerCodeProviderWrapper calls _validate_repo_name
+        # which rejects absolute paths as "path traversal", so skip wrapping for local paths.
+        is_local_path = (
+            os.path.isabs(repo_name)
+            or repo_name.startswith(("~", "./", "../"))
+            or os.path.isdir(os.path.expanduser(repo_name))
+        )
+
         provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
-        # Wrap provider to use local copies if available
-        provider = self._wrap_provider_if_needed(provider)
+        # Only wrap with RepoManager for remote repos
+        if not is_local_path:
+            provider = self._wrap_provider_if_needed(provider)
 
         try:
             return provider.get_file_content(
@@ -335,8 +344,9 @@ class ProviderWrapper:
 
                 unauth_provider = GitHubProvider()
                 unauth_provider.set_unauthenticated_client()
-                # Wrap unauthenticated provider too
-                unauth_provider = self._wrap_provider_if_needed(unauth_provider)
+                # Wrap unauthenticated provider too (only for remote repos)
+                if not is_local_path:
+                    unauth_provider = self._wrap_provider_if_needed(unauth_provider)
                 return unauth_provider.get_file_content(
                     repo_name=repo_name,
                     file_path=file_path,
@@ -347,6 +357,23 @@ class ProviderWrapper:
             else:
                 # Not a 401 error, or not GitHub - propagate the error
                 raise
+
+    @staticmethod
+    def _format_structure_list(structure: list, indent: int = 0) -> str:
+        """Convert LocalProvider's List[Dict] structure to a readable string."""
+        lines = []
+        for item in structure:
+            prefix = "  " * indent
+            name = item.get("name", "")
+            item_type = item.get("type", "file")
+            if item_type == "directory":
+                lines.append(f"{prefix}{name}/")
+                children = item.get("children", [])
+                if children:
+                    lines.append(ProviderWrapper._format_structure_list(children, indent + 1))
+            else:
+                lines.append(f"{prefix}{name}")
+        return "\n".join(lines)
 
     async def get_project_structure_async(self, project_id, path: Optional[str] = None):
         """Get project structure using the provider."""
@@ -426,7 +453,8 @@ class ProviderWrapper:
 
             # Check if local copy exists in repo_manager first
             # This takes precedence over all other methods
-            if self.repo_manager:
+            # Skip for local absolute paths — repo_manager doesn't manage them
+            if self.repo_manager and not is_local_path:
                 # Try to get local copy path - check without ref first
                 local_path = self.repo_manager.get_repo_path(repo_name)
                 if local_path and os.path.exists(local_path):
@@ -445,15 +473,16 @@ class ProviderWrapper:
                     )
                     return structure
 
-            # For local repos detected by path, always use LocalProvider
+            # For local repos detected by path, always use LocalProvider directly
+            # Do NOT wrap with RepoManagerCodeProviderWrapper — it calls _validate_repo_name
+            # which rejects absolute paths as "path traversal"
             if is_local_path or provider_type == "local":
                 provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
-                # Wrap provider to use local copies if available
-                provider = self._wrap_provider_if_needed(provider)
-                # Use the provider to get repository structure
                 structure = provider.get_repository_structure(
                     repo_name=repo_name, path=path or "", ref=ref, max_depth=4
                 )
+                if isinstance(structure, list):
+                    return self._format_structure_list(structure)
                 return structure
 
             # For GitHub repos, use the old GithubService implementation which has better async handling,
