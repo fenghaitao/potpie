@@ -865,7 +865,7 @@ class ProviderService:
                 # Use structured output with instructor
                 request_kwargs = {
                     key: params[key]
-                    for key in ("api_key", "base_url", "api_version")
+                    for key in ("api_key", "base_url", "api_version", "extra_headers")
                     if key in params
                 }
 
@@ -888,7 +888,7 @@ class ProviderService:
                     ollama_request_kwargs = {
                         key: value
                         for key, value in request_kwargs.items()
-                        if key not in {"base_url", "api_key", "api_version"}
+                        if key not in {"base_url", "api_key", "api_version", "extra_headers"}
                     }
                     response = await client.chat.completions.create(
                         model=params["model"].split("/")[-1],
@@ -985,7 +985,7 @@ class ProviderService:
 
         request_kwargs = {
             key: params[key]
-            for key in ("api_key", "base_url", "api_version")
+            for key in ("api_key", "base_url", "api_version", "extra_headers")
             if key in params
         }
 
@@ -1009,7 +1009,7 @@ class ProviderService:
                 ollama_request_kwargs = {
                     key: value
                     for key, value in request_kwargs.items()
-                    if key not in {"base_url", "api_key", "api_version"}
+                    if key not in {"base_url", "api_key", "api_version", "extra_headers"}
                 }
                 response = await client.chat.completions.create(
                     model=params["model"].split("/")[-1],

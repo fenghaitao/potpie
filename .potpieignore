@@ -1,0 +1,38 @@
+# Subdirectories to exclude from code indexing
+singularity/
+potpie-ui/
+scip/
+potpie.egg-info/
+
+# Python artifacts
+__pycache__/
+.venv/
+*.egg-info/
+
+# Test/cache artifacts
+.pytest_cache/
+.hypothesis/
+.ruff_cache/
+
+# Tooling/IDE
+.deepwiki/
+.qoder/
+.repos/
+.repos_local/
+.github/
+.cursor/
+.claude/
+.codex/
+.taskmaster/
+worktrees/
+
+# Data/project dirs
+projects/
+specs/
+thoughts/
+assets/
+deployment/
+
+# Lock/config files at root (not source code)
+uv.lock
+package-lock.json

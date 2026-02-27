@@ -19,7 +19,7 @@ cli/momentum_cli/.momentum
 !.env.template
 *.log
 .cursorrules
-projects/
+/projects/
 # Ignore PyCharm config
 .idea
 

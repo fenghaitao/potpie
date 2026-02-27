@@ -136,7 +136,8 @@ class ParsingService:
 
                 # Early check: if project already exists and is READY for this commit, skip parsing
                 if cleanup_graph and repo_details.commit_id and existing_project:
-                    is_latest = await self.parse_helper.check_commit_status(
+                    already_ready = existing_project.get("status") == ProjectStatusEnum.READY.value
+                    is_latest = already_ready and await self.parse_helper.check_commit_status(
                         str(project_id), requested_commit_id=repo_details.commit_id
                     )
                     if is_latest:
@@ -354,7 +355,8 @@ class ParsingService:
                     },
                 )
                 await self.analyze_directory(
-                    extracted_dir, project_id, user_id, self.db, language, user_email
+                    extracted_dir, project_id, user_id, self.db, language, user_email,
+                    commit_id=repo_details.commit_id,
                 )
                 message = "The project has been parsed successfully"
                 return {"message": message, "id": project_id}
@@ -440,6 +442,7 @@ class ParsingService:
         db,
         language: str,
         user_email: str,
+        commit_id: str = None,
     ):
         logger.info(
             f"ParsingService: Parsing project {project_id}: Analyzing directory: {extracted_dir}"
@@ -536,6 +539,12 @@ class ParsingService:
                     project_id, ProjectStatusEnum.READY
                 )
                 final_status_time = time.time() - final_status_start
+                # Update commit_id after successful parse so change detection works on next run
+                if commit_id:
+                    ProjectService.update_project(
+                        self.db, project_id, commit_id=commit_id
+                    )
+                    self.db.commit()
 
                 if not self._raise_library_exceptions and user_email:
                     task = create_task(

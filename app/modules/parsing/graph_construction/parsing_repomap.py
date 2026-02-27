@@ -614,6 +614,19 @@ class RepoMap:
         references = defaultdict(set)
         seen_relationships = set()
 
+        # Load .potpieignore patterns for filtering
+        _potpieignore_spec = None
+        _potpieignore_path = os.path.join(repo_dir, ".potpieignore")
+        if os.path.exists(_potpieignore_path):
+            try:
+                import pathspec
+                with open(_potpieignore_path, "r", encoding="utf-8") as _f:
+                    _potpieignore_spec = pathspec.PathSpec.from_lines(
+                        pathspec.patterns.GitWildMatchPattern, _f.read().splitlines()
+                    )
+            except Exception:
+                pass
+
         for root, dirs, files in os.walk(repo_dir):
             # Get relative path from repo_dir to avoid skipping paths that contain .repos_local etc.
             try:
@@ -650,9 +663,22 @@ class RepoMap:
             ):
                 continue
 
+            # Prune dirs in-place to skip .potpieignore-matched directories
+            if _potpieignore_spec:
+                dirs[:] = [
+                    d for d in dirs
+                    if not _potpieignore_spec.match_file(
+                        os.path.relpath(os.path.join(root, d), repo_dir) + "/"
+                    )
+                ]
+
             for file in files:
                 file_path = os.path.join(root, file)
                 file_rel_path = os.path.relpath(file_path, repo_dir)
+
+                # Skip files matching .potpieignore patterns
+                if _potpieignore_spec and _potpieignore_spec.match_file(file_rel_path):
+                    continue
 
                 if not self.parse_helper.is_text_file(file_path):
                     continue
@@ -661,16 +687,28 @@ class RepoMap:
 
                 # Add file node
                 file_node_name = file_rel_path
+                file_text = self.io.read_text(file_path) or ""
+                file_lines = file_text.splitlines()
                 if not G.has_node(file_node_name):
                     G.add_node(
                         file_node_name,
                         file=file_rel_path,
                         type="FILE",
-                        text=self.io.read_text(file_path) or "",
+                        text=file_text,
                         line=0,
                         end_line=0,
                         name=file_rel_path.split("/")[-1],
                     )
+
+                # Pre-parse the file with tree-sitter so we can look up full node extents
+                _ts_root = None
+                _ts_lang = filename_to_lang(file_path)
+                if _ts_lang:
+                    try:
+                        _ts_parser = get_parser(_ts_lang)
+                        _ts_root = _ts_parser.parse(bytes(file_text, "utf-8")).root_node
+                    except Exception:
+                        _ts_root = None
 
                 current_class = None
                 current_method = None
@@ -698,6 +736,19 @@ class RepoMap:
                         else:
                             node_name = f"{file_rel_path}:{tag.name}"
 
+                        # Extract full source text using tree-sitter AST extent when available
+                        if tag.line >= 0:
+                            actual_end_line = tag.line  # fallback: just the name line
+                            if _ts_root is not None:
+                                ts_node = RepoMap.find_node_by_range(
+                                    _ts_root, tag.line, node_type
+                                )
+                                if ts_node is not None:
+                                    actual_end_line = ts_node.end_point[0]
+                            node_text = "\n".join(file_lines[tag.line : actual_end_line + 1])
+                        else:
+                            node_text = ""
+
                         # Add node
                         if not G.has_node(node_name):
                             G.add_node(
@@ -708,6 +759,7 @@ class RepoMap:
                                 type=node_type,
                                 name=tag.name,
                                 class_name=current_class,
+                                text=node_text,
                             )
 
                             # Add CONTAINS relationship from file
