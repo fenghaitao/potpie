@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from potpie.exceptions import ParsingError, ProjectNotFoundError
 from potpie.resources.base import BaseResource
@@ -45,6 +45,8 @@ class ParsingResource(BaseResource):
         user_email: str = "",
         *,
         cleanup_graph: bool = True,
+        commit_id: Optional[str] = None,
+        force: bool = False,
     ) -> ParsingResult:
         """Parse a project and build its knowledge graph.
 
@@ -56,6 +58,8 @@ class ParsingResource(BaseResource):
             user_id: User ID performing the parsing
             user_email: User email (optional, used for notifications)
             cleanup_graph: Whether to remove existing graph data first
+            commit_id: Override commit ID for change detection (uses stored value if None)
+            force: Skip commit-based change detection and always reparse
 
         Returns:
             ParsingResult with status and any errors
@@ -86,13 +90,15 @@ class ParsingResource(BaseResource):
             repo_name = project_data.get("project_name")
             branch_name = project_data.get("branch_name")
             repo_path = project_data.get("repo_path")
-            commit_id = project_data.get("commit_id")
+            # Use caller-supplied commit_id if provided, otherwise fall back to stored value.
+            # When force=True, pass None so the skip-check in parse_directory is bypassed.
+            effective_commit_id = None if force else (commit_id if commit_id is not None else project_data.get("commit_id"))
 
             repo_details = ParsingRequest(
                 repo_name=repo_name,
                 branch_name=branch_name,
                 repo_path=repo_path,
-                commit_id=commit_id,
+                commit_id=effective_commit_id,
             )
 
             neo4j_config = self._get_neo4j_config()

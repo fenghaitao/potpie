@@ -3972,6 +3972,11 @@ dependencies = [
 ]
 
 [package.dev-dependencies]
+cli = [
+    { name = "click" },
+    { name = "pyyaml" },
+    { name = "rich" },
+]
 dev = [
     { name = "bandit" },
     { name = "black" },
@@ -4054,6 +4059,11 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
+cli = [
+    { name = "click", specifier = ">=8.1.0" },
+    { name = "pyyaml", specifier = ">=6.0" },
+    { name = "rich", specifier = ">=13.0.0" },
+]
 dev = [
     { name = "bandit", specifier = ">=1.8.6" },
     { name = "black", specifier = ">=25.9.0" },

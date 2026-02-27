@@ -53,8 +53,12 @@ class ProjectResource(BaseResource):
         branch_name: str,
         repo_path: Optional[str] = None,
     ) -> str:
-        """Generate a deterministic project ID."""
-        return str(uuid7())
+        """Generate a deterministic project ID from repo identity."""
+        import hashlib
+        from uuid import UUID
+        key = f"{user_id}:{repo_name}:{branch_name}:{repo_path or ''}"
+        digest = hashlib.md5(key.encode()).hexdigest()
+        return str(UUID(digest))
 
     async def register(
         self,
@@ -207,22 +211,37 @@ class ProjectResource(BaseResource):
         finally:
             session.close()
 
-    async def list(self, user_id: str) -> List[str]:
-        """List all project IDs for a user.
+    async def list(self, user_id: str) -> List[ProjectInfo]:
+        """List all projects for a user.
 
         Args:
             user_id: User ID whose projects to list
 
         Returns:
-            List of project ID strings
+            List of ProjectInfo objects
         """
         service, session = self._get_service()
         try:
             projects = await service.list_projects(user_id)
-            return [p["id"] for p in projects]
+            return [
+                ProjectInfo(
+                    id=p["id"],
+                    repo_name=p["repo_name"],
+                    branch_name="",  # Not returned by list_projects
+                    status=ProjectStatus.from_string(p.get("status", "error")),
+                )
+                for p in projects
+            ]
 
         except ProjectError:
             raise
+        except Exception as e:
+            translated = ExceptionTranslator.translate_exception(
+                e, ProjectError, ProjectNotFoundError
+            )
+            raise translated from e
+        finally:
+            session.close()
 
     async def delete(self, project_id: str) -> None:
         """Delete a project and its associated data.

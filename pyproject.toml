@@ -74,6 +74,11 @@ dependencies = [
 ]
 
 [dependency-groups]
+cli = [
+    "click>=8.1.0",
+    "rich>=13.0.0",
+    "pyyaml>=6.0",
+]
 dev = [
     "bandit>=1.8.6",
     "black>=25.9.0",

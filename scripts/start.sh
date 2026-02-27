@@ -39,6 +39,10 @@ if ! uv sync; then
   exit 1
 fi
 
+# Install CLI dependencies (click, rich, pyyaml)
+echo "Installing CLI dependencies..."
+uv pip install --group cli
+
 # Install gVisor (optional, for command isolation)
 echo "Installing gVisor (optional, for command isolation)..."
 if python scripts/install_gvisor.py 2>/dev/null; then
