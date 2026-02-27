@@ -1,0 +1,11 @@
+# SIF binary files - built locally with 'singularity-compose build', not committed
+*.sif
+
+# Runtime network config files
+etc.hosts
+resolv.conf
+
+# Runtime data - content is ignored; directory structure is tracked via .gitignore files
+potpie-data/**
+!potpie-data/**/
+!potpie-data/**/.gitignore
