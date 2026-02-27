@@ -568,10 +568,18 @@ class InferenceService:
 
         return DocstringResponse(docstrings=consolidated_responses)
 
+    def _get_inference_max_tokens(self) -> int:
+        """Return the max input tokens budget for inference batches, based on the configured model."""
+        from app.modules.intelligence.provider.llm_config import get_context_window
+        model = self.provider_service.inference_config.model
+        context_window = get_context_window(model) or 128000
+        # Use half the context window for input, leaving room for output tokens
+        return context_window // 2
+
     def _create_batches_from_nodes(
         self,
         nodes: List[Dict],
-        max_tokens: int = 200000,  # Increased but still conservative (context window is 272k, prompt overhead ~2-3k)
+        max_tokens: int = None,  # None = auto-detect from provider
         model: str = "gpt-4",
         project_id: Optional[str] = None,
     ) -> List[List[DocstringRequest]]:
@@ -581,6 +589,8 @@ class InferenceService:
         Only processes nodes that don't have cached_inference set.
         Uses normalized_text if available, otherwise normalizes on the fly.
         """
+        if max_tokens is None:
+            max_tokens = self._get_inference_max_tokens()
         batch_start_time = time.time()
         node_dict = {node["node_id"]: node for node in nodes}
 
@@ -1320,9 +1330,9 @@ class InferenceService:
         system_message = "You are an expert software documentation assistant. You will analyze code and provide structured documentation in JSON format."
         user_content = base_prompt.format(code_snippets=code_snippets)
 
-        # Check total token count before sending (context window is typically 272k, but we should be conservative)
-        # Account for response tokens and overhead
-        MAX_CONTEXT_TOKENS = 250000  # Conservative limit, leaving room for response
+        # Check total token count before sending — use provider-aware context window
+        # Account for response tokens and overhead (use half the context window for input)
+        MAX_CONTEXT_TOKENS = self._get_inference_max_tokens()
         model = "gpt-4"  # Default model for token counting
 
         system_tokens = self.num_tokens_from_string(system_message, model)

@@ -239,6 +239,7 @@ MODEL_CONFIG_MAP = {
     "github_copilot/gpt-4o": {
         "provider": "github_copilot",
         "auth_provider": "github_copilot",
+        "context_window": 64000,
         "default_params": {"temperature": 0.3, "max_tokens": 16384},
         "capabilities": {
             "supports_pydantic": True,
@@ -252,6 +253,7 @@ MODEL_CONFIG_MAP = {
     "github_copilot/gpt-4o-mini": {
         "provider": "github_copilot",
         "auth_provider": "github_copilot",
+        "context_window": 64000,
         "default_params": {"temperature": 0.3, "max_tokens": 16384},
         "capabilities": {
             "supports_pydantic": True,
@@ -265,6 +267,7 @@ MODEL_CONFIG_MAP = {
     "github_copilot/claude-3.5-sonnet": {
         "provider": "github_copilot",
         "auth_provider": "github_copilot",
+        "context_window": 64000,
         "default_params": {"temperature": 0.3, "max_tokens": 16384},
         "capabilities": {
             "supports_pydantic": True,
@@ -278,6 +281,7 @@ MODEL_CONFIG_MAP = {
     "github_copilot/o1-preview": {
         "provider": "github_copilot",
         "auth_provider": "github_copilot",
+        "context_window": 64000,
         "default_params": {"temperature": 1.0, "max_tokens": 8192},
         "capabilities": {
             "supports_pydantic": True,
