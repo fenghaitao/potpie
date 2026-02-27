@@ -72,7 +72,21 @@ class InferenceService:
         self.embedding_model = get_embedding_model()  # Use singleton to avoid reloading
         self.search_service = SearchService(db)
         self.project_manager = ProjectService(db)
-        self.parallel_requests = int(os.getenv("PARALLEL_REQUESTS", 50))
+        self.parallel_requests = int(os.getenv("PARALLEL_REQUESTS", 0))
+        if self.parallel_requests == 0:
+            # Auto-detect based on provider
+            auth_provider = self.provider_service.inference_config.auth_provider
+            if auth_provider == "github_copilot":
+                # GitHub Copilot: conservative to stay under 150 req/min rate limit
+                self.parallel_requests = int(os.getenv("GITHUB_COPILOT_PARALLEL_REQUESTS", 5))
+                logger.info(f"Using GitHub Copilot with parallel_requests={self.parallel_requests} (rate limit: 150 req/min)")
+            elif auth_provider in ["anthropic", "openai"]:
+                self.parallel_requests = int(os.getenv("OPENAI_PARALLEL_REQUESTS", 20))
+                logger.info(f"Using {auth_provider} with parallel_requests={self.parallel_requests}")
+            else:
+                self.parallel_requests = 10
+                logger.info(f"Using {auth_provider} with parallel_requests={self.parallel_requests}")
+        logger.info(f"Inference service initialized with parallel_requests={self.parallel_requests}")
 
     def close(self):
         self.driver.close()
@@ -743,7 +757,7 @@ class InferenceService:
         self,
         entry_points_neighbors: Dict[str, List[str]],
         docstring_lookup: Dict[str, str],
-        max_tokens: int = 16000,
+        max_tokens: int = 8000,  # input budget per batch; output needs equal headroom
         model: str = "gpt-4",
     ) -> List[List[Dict[str, str]]]:
         batches = []
@@ -1068,9 +1082,13 @@ class InferenceService:
                             )
                             docstring_embeddings[docstring_result.node_id] = embedding
 
-                        for request, docstring_result in zip(
-                            batch, response.docstrings
-                        ):
+                        # Build lookup by node_id for correct matching (not positional zip)
+                        response_by_id = {d.node_id: d for d in response.docstrings}
+
+                        for request in batch:
+                            docstring_result = response_by_id.get(request.node_id)
+                            if docstring_result is None:
+                                continue
                             metadata = request.metadata or {}
                             embedding = docstring_embeddings.get(
                                 docstring_result.node_id
@@ -1124,6 +1142,13 @@ class InferenceService:
                                 repo_id, processed_response, docstring_embeddings
                             )
                         neo4j_update_time = time.time() - neo4j_update_start
+
+                        # Generate fallback docstrings for nodes the LLM skipped
+                        returned_ids = {d.node_id for d in response.docstrings}
+                        skipped = [req for req in batch if req.node_id not in returned_ids]
+                        if skipped:
+                            logger.debug(f"Batch {batch_index}: LLM skipped {len(skipped)} nodes, generating fallback docstrings")
+                            self._write_fallback_docstrings(repo_id, skipped)
 
                         batch_process_time = time.time() - batch_process_start
                         batch_timings.append(batch_process_time)
@@ -1351,6 +1376,23 @@ class InferenceService:
 
         logger.info(f"Parsing project {repo_id}: Inference request completed.")
         return result
+
+    def _write_fallback_docstrings(self, repo_id: str, skipped_requests) -> None:
+        """Write minimal fallback docstrings for nodes the LLM skipped (e.g. short stubs)."""
+        from app.modules.parsing.knowledge_graph.inference_schema import DocstringNode
+
+        fallback_docstrings = []
+        for req in skipped_requests:
+            first_line = (req.text or "").strip().splitlines()[0] if req.text else ""
+            docstring = f"Code stub: {first_line}" if first_line else "Code stub."
+            fallback_docstrings.append(
+                DocstringNode(node_id=req.node_id, docstring=docstring, tags=["UTILITY"])
+            )
+
+        if fallback_docstrings:
+            self.update_neo4j_with_docstrings(
+                repo_id, DocstringResponse(docstrings=fallback_docstrings)
+            )
 
     def generate_embedding(self, text: str) -> List[float]:
         embedding = self.embedding_model.encode(text)
