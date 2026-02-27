@@ -82,3 +82,7 @@ worktrees/
 .ruff_cache/
 .pytest_cache/
 specs/
+
+# SCIP generated files
+scip/scip_pb2.py
+*.scip

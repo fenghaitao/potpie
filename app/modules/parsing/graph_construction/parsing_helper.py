@@ -374,6 +374,7 @@ class ParseHelper:
             "wmv",
             "flv",
             "ipynb",
+            "scip",   # SCIP code intelligence index — binary, not source
         ]
         include_extensions = [
             "py",
