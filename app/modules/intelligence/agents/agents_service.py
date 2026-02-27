@@ -36,6 +36,7 @@ from .chat_agents.system_agents import (
     qna_agent,
     specgen,
     unit_test_agent,
+    wiki_agent,
 )
 
 logger = setup_logger(__name__)
@@ -168,6 +169,14 @@ class AgentsService:
                 name="Specification Generation Agent",
                 description="An agent specialized in generating comprehensive technical specifications from user requests through a systematic 7-step process.",
                 agent=specgen.SpecGenAgent(
+                    llm_provider, tools_provider, prompt_provider
+                ),
+            ),
+            "wiki_agent": AgentWithInfo(
+                id="wiki_agent",
+                name="Wiki Documentation Agent",
+                description="Generate comprehensive wiki documentation from code. Creates structured pages with API references, examples, and diagrams, written to .qoder/repowiki/.",
+                agent=wiki_agent.WikiAgent(
                     llm_provider, tools_provider, prompt_provider
                 ),
             ),

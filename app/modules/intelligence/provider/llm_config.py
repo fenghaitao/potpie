@@ -235,6 +235,59 @@ MODEL_CONFIG_MAP = {
         "base_url": "https://openrouter.ai/api/v1",
         "api_version": None,
     },
+    # GitHub Copilot Models
+    "github_copilot/gpt-4o": {
+        "provider": "github_copilot",
+        "auth_provider": "github_copilot",
+        "default_params": {"temperature": 0.3, "max_tokens": 16384},
+        "capabilities": {
+            "supports_pydantic": True,
+            "supports_streaming": True,
+            "supports_vision": False,
+            "supports_tool_parallelism": True,
+        },
+        "base_url": None,
+        "api_version": None,
+    },
+    "github_copilot/gpt-4o-mini": {
+        "provider": "github_copilot",
+        "auth_provider": "github_copilot",
+        "default_params": {"temperature": 0.3, "max_tokens": 16384},
+        "capabilities": {
+            "supports_pydantic": True,
+            "supports_streaming": True,
+            "supports_vision": False,
+            "supports_tool_parallelism": True,
+        },
+        "base_url": None,
+        "api_version": None,
+    },
+    "github_copilot/claude-3.5-sonnet": {
+        "provider": "github_copilot",
+        "auth_provider": "github_copilot",
+        "default_params": {"temperature": 0.3, "max_tokens": 16384},
+        "capabilities": {
+            "supports_pydantic": True,
+            "supports_streaming": True,
+            "supports_vision": False,
+            "supports_tool_parallelism": True,
+        },
+        "base_url": None,
+        "api_version": None,
+    },
+    "github_copilot/o1-preview": {
+        "provider": "github_copilot",
+        "auth_provider": "github_copilot",
+        "default_params": {"temperature": 1.0, "max_tokens": 8192},
+        "capabilities": {
+            "supports_pydantic": True,
+            "supports_streaming": True,
+            "supports_vision": False,
+            "supports_tool_parallelism": False,
+        },
+        "base_url": None,
+        "api_version": None,
+    },
 }
 
 
@@ -284,6 +337,16 @@ class LLMProviderConfig:
         for key, value in self.default_params.items():
             if key != "temperature":  # temperature already handled above
                 params[key] = value
+
+        # Inject extra_headers from env if set (JSON string)
+        raw_headers = os.environ.get("LLM_EXTRA_HEADERS")
+        if raw_headers:
+            try:
+                import json
+                params["extra_headers"] = json.loads(raw_headers)
+            except Exception:
+                pass
+
         return params
 
 
@@ -325,6 +388,7 @@ def get_config_for_model(model_string: str) -> Dict[str, Any]:
         "openrouter",
         "azure",
         "ollama",
+        "github_copilot",
     }
     return {
         "provider": provider,
