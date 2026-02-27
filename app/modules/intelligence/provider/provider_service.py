@@ -557,6 +557,8 @@ class ProviderService:
         litellm.modify_params = True
         instance.db = db
         instance.user_id = user_id
+        instance._api_key_cache: Dict[str, Optional[str]] = {}
+        instance.user_preferences = {}
 
         resolved_chat_model = (
             chat_model or f"{provider}/gpt-4o"
