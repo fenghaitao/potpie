@@ -73,6 +73,9 @@ dependencies = [
     "greenlet>=3.3.0",
 ]
 
+[project.scripts]
+potpie-cli = "potpie_cli:cli"
+
 [dependency-groups]
 cli = [
     "click>=8.1.0",
@@ -92,6 +95,9 @@ dev = [
 
 [tool.setuptools.packages.find]
 include = ["potpie*", "app*"]
+
+[tool.setuptools]
+py-modules = ["potpie_cli"]
 
 [tool.bandit]
 exclude_dirs = ["tests", "app/alembic"]

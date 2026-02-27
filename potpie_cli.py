@@ -64,10 +64,10 @@ def cli():
     Build knowledge graphs and chat with your codebase from the command line.
     
     Examples:
-        potpie parse /path/to/repo              # Build knowledge graph
-        potpie chat --project <project-id>      # Interactive chat
-        potpie ask "How does auth work?" -p <id> # One-shot question
-        potpie agents                           # List available agents
+        potpie-cli parse /path/to/repo              # Build knowledge graph
+        potpie-cli chat --project <project-id>      # Interactive chat
+        potpie-cli ask "How does auth work?" -p <id> # One-shot question
+        potpie-cli agents                           # List available agents
     """
     pass
 
@@ -94,10 +94,10 @@ def parse_repo(repo_path: str, branch: Optional[str], user_id: Optional[str], cl
     Parse a repository and build its knowledge graph.
     
     Examples:
-        potpie parse repo /path/to/myproject
-        potpie parse repo ~/code/app --branch develop
-        potpie parse repo . --no-cleanup
-        potpie parse repo . --force
+        potpie-cli parse repo /path/to/myproject
+        potpie-cli parse repo ~/code/app --branch develop
+        potpie-cli parse repo . --no-cleanup
+        potpie-cli parse repo . --force
     """
     # Auto-detect current git branch if not specified
     if branch is None:
@@ -196,11 +196,11 @@ async def _parse_repo(repo_path: str, branch: str, user_id: str, cleanup: bool, 
             
             console.print(f"\n💡 [yellow]Quick start commands:[/yellow]")
             console.print(f"   [dim]# Interactive chat[/dim]")
-            console.print(f"   potpie chat -p {project_id}")
+            console.print(f"   potpie-cli chat -p {project_id}")
             console.print(f"   [dim]# Or use the shortcut (uses last parsed project)[/dim]")
-            console.print(f"   potpie chat")
+            console.print(f"   potpie-cli chat")
             console.print(f"   [dim]# One-shot question[/dim]")
-            console.print(f"   potpie ask \"Explain the architecture\" -p {project_id}")
+            console.print(f"   potpie-cli ask \"Explain the architecture\" -p {project_id}")
             
         else:
             console.print(f"[bold red]❌ Parsing failed:[/bold red] {result.error_message}")
@@ -229,7 +229,7 @@ async def _parse_status(project_id: Optional[str]):
             project_id = _get_last_project()
             if not project_id:
                 console.print("[yellow]No project ID provided and no recent project found.[/yellow]")
-                console.print("Usage: potpie parse status <project-id>")
+                console.print("Usage: potpie-cli parse status <project-id>")
                 raise click.Abort()
         
         runtime = await ctx_obj.get_runtime()
@@ -278,10 +278,10 @@ def chat(project: Optional[str], agent: str):
     🗣️  Start an interactive chat session with an agent.
     
     Examples:
-        potpie chat                                    # Use last project
-        potpie chat -p <project-id>                   # Specify project
-        potpie chat -p <id> -a code_generation_agent  # Use code gen agent
-        potpie chat -a debugging_agent                # Debug last project
+        potpie-cli chat                                    # Use last project
+        potpie-cli chat -p <project-id>                   # Specify project
+        potpie-cli chat -p <id> -a code_generation_agent  # Use code gen agent
+        potpie-cli chat -a debugging_agent                # Debug last project
     """
     asyncio.run(_chat(project, agent))
 
@@ -293,8 +293,8 @@ async def _chat(project_id: Optional[str], agent_id: str):
             project_id = _get_last_project()
             if not project_id:
                 console.print("[yellow]No project specified and no recent project found.[/yellow]")
-                console.print("Usage: potpie chat --project <project-id>")
-                console.print("Or parse a repository first: potpie parse repo /path/to/repo")
+                console.print("Usage: potpie-cli chat --project <project-id>")
+                console.print("Or parse a repository first: potpie-cli parse repo /path/to/repo")
                 raise click.Abort()
         
         runtime = await ctx_obj.get_runtime()
@@ -304,7 +304,7 @@ async def _chat(project_id: Optional[str], agent_id: str):
             agent = getattr(runtime.agents, agent_id)
         except AttributeError:
             console.print(f"[red]Agent '{agent_id}' not found.[/red]")
-            console.print("Run 'potpie agents' to see available agents.")
+            console.print("Run 'potpie-cli agents' to see available agents.")
             raise click.Abort()
         
         # Get project info
@@ -384,9 +384,9 @@ def ask(query: str, project: Optional[str], agent: str, markdown: bool):
     ❓ Ask a one-shot question to an agent.
     
     Examples:
-        potpie ask "How does authentication work?"
-        potpie ask "Explain the main function" -p <project-id>
-        potpie ask "Find all API endpoints" -a codebase_qna_agent
+        potpie-cli ask "How does authentication work?"
+        potpie-cli ask "Explain the main function" -p <project-id>
+        potpie-cli ask "Find all API endpoints" -a codebase_qna_agent
     """
     asyncio.run(_ask(query, project, agent, markdown))
 
@@ -452,9 +452,9 @@ def code(description: str, project: Optional[str], preview: bool):
     💻 Generate code changes using the code generation agent.
     
     Examples:
-        potpie code "Add error handling to user service"
-        potpie code "Create a new API endpoint for users" -p <id>
-        potpie code "Refactor authentication module" --preview
+        potpie-cli code "Add error handling to user service"
+        potpie-cli code "Create a new API endpoint for users" -p <id>
+        potpie-cli code "Refactor authentication module" --preview
     """
     asyncio.run(_code(description, project, preview))
 
@@ -511,10 +511,10 @@ def wiki(project: Optional[str], query: str, section: Optional[str]):
     📖 Generate wiki pages for a project into .qoder/repowiki/.
 
     Examples:
-        potpie wiki                                      # Generate full wiki for last project
-        potpie wiki -p <project-id>                      # Specify project
-        potpie wiki -s "Core Architecture"               # One section only
-        potpie wiki -q "Document the auth module only"   # Custom instruction
+        potpie-cli wiki                                      # Generate full wiki for last project
+        potpie-cli wiki -p <project-id>                      # Specify project
+        potpie-cli wiki -s "Core Architecture"               # One section only
+        potpie-cli wiki -q "Document the auth module only"   # Custom instruction
     """
     if query is None:
         if section:
@@ -613,8 +613,8 @@ async def _list_agents():
         console.print(table)
         
         console.print(f"\n💡 [yellow]Usage:[/yellow]")
-        console.print(f"   potpie chat --agent <agent-id>")
-        console.print(f"   potpie ask \"question\" --agent <agent-id>")
+        console.print(f"   potpie-cli chat --agent <agent-id>")
+        console.print(f"   potpie-cli ask \"question\" --agent <agent-id>")
         
     except Exception as e:
         console.print(f"[bold red]Error:[/bold red] {e}")
@@ -650,7 +650,7 @@ async def _list_projects(user_id: str):
         
         if not projects:
             console.print("[yellow]No projects found.[/yellow]")
-            console.print("Parse a repository first: potpie parse repo /path/to/repo")
+            console.print("Parse a repository first: potpie-cli parse repo /path/to/repo")
             return
         
         table = Table(title="📁 Registered Projects", show_header=True, header_style="bold cyan")
@@ -688,8 +688,8 @@ def remove_project_cmd(project_id: str, force: bool):
     🗑️  Remove a project and its associated data.
     
     Examples:
-        potpie projects remove <project-id>
-        potpie projects remove <project-id> --force
+        potpie-cli projects remove <project-id>
+        potpie-cli projects remove <project-id> --force
     """
     asyncio.run(_remove_project(project_id, force))
 
@@ -702,9 +702,9 @@ def remove_all_projects_cmd(user_id: Optional[str], force: bool):
     🗑️  Remove all projects and their associated data.
     
     Examples:
-        potpie projects remove-all
-        potpie projects remove-all --user-id <user-id>
-        potpie projects remove-all --force
+        potpie-cli projects remove-all
+        potpie-cli projects remove-all --user-id <user-id>
+        potpie-cli projects remove-all --force
     """
     asyncio.run(_remove_all_projects(user_id or ctx_obj.default_user_id, force))
 
@@ -953,9 +953,9 @@ def eval(project: str, agent: str, cases: Optional[str], concurrency: int):
     using pydantic_evals LLMJudge rubrics.
 
     Examples:
-        potpie eval -p <project-id>
-        potpie eval -p <project-id> --cases my_cases.yaml
-        potpie eval -p <project-id> --agent codebase_qna_agent --concurrency 2
+        potpie-cli eval -p <project-id>
+        potpie-cli eval -p <project-id> --cases my_cases.yaml
+        potpie-cli eval -p <project-id> --agent codebase_qna_agent --concurrency 2
     """
     asyncio.run(_eval(project, agent, cases, concurrency))
 

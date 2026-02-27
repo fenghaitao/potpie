@@ -86,3 +86,6 @@ specs/
 # SCIP generated files
 scip/scip_pb2.py
 *.scip
+
+# Python egg/build artifacts
+*.egg-info/
