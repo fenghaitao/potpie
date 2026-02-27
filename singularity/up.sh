@@ -10,8 +10,8 @@ cd "$(dirname "$0")"
 # Bootstrap singularity-compose venv on first use
 if [ ! -x "$SINGULARITY_COMPOSE" ]; then
     echo "Setting up singularity-compose venv..."
-    python3 -m venv singularity-compose/.venv
-    singularity-compose/.venv/bin/pip install -e singularity-compose/
+    uv venv singularity-compose/.venv
+    uv pip install --python singularity-compose/.venv/bin/python -e singularity-compose/
 fi
 
 export POSTGRES_PORT=${POSTGRES_PORT:-5432}
@@ -24,6 +24,12 @@ echo "  postgres  -> :${POSTGRES_PORT}"
 echo "  redis     -> :${REDIS_PORT}"
 echo "  neo4j     -> bolt::${SNG_NEO4J_BOLT_PORT}  http::${SNG_NEO4J_HTTP_PORT}"
 echo ""
+
+# Build SIF images if any are missing
+if [ ! -f postgres.sif ] || [ ! -f neo4j.sif ] || [ ! -f redis.sif ]; then
+    echo "Building missing SIF images..."
+    $SINGULARITY_COMPOSE build
+fi
 
 # Remove .gitignore placeholder so initdb can initialize the data dir on first run
 PG_DATA_DIR="$(dirname "$0")/potpie-data/postgres"
@@ -43,3 +49,6 @@ if [ -f "$POSTMASTER_PID" ]; then
 fi
 
 $SINGULARITY_COMPOSE up "$@"
+
+# Restore .gitignore placeholder now that initdb has run (keeps the empty dir tracked in git)
+git checkout -- "$PG_DATA_DIR/.gitignore" 2>/dev/null || true
