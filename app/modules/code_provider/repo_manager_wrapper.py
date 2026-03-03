@@ -664,10 +664,17 @@ class RepoManagerCodeProviderWrapper(ICodeProvider):
             return repo.working_tree_dir or repo.git_dir
 
     def _build_structure_from_filesystem(
-        self, base_path: str, path: str, max_depth: int
+        self,
+        base_path: str,
+        path: str,
+        max_depth: int,
+        _ignore_spec=None,
+        _ignore_spec_loaded: bool = False,
     ) -> List[Dict[str, Any]]:
         """
         Build repository structure from local filesystem.
+
+        Respects .gitignore and .potpieignore patterns via load_ignore_spec().
 
         Args:
             base_path: Base path of the repository
@@ -677,6 +684,12 @@ class RepoManagerCodeProviderWrapper(ICodeProvider):
         Returns:
             List of file/directory dictionaries
         """
+        # Load ignore spec once at the top-level call, then pass it down
+        if not _ignore_spec_loaded:
+            from app.modules.code_provider.ignore_spec import load_ignore_spec
+            _ignore_spec = load_ignore_spec(base_path)
+            _ignore_spec_loaded = True
+
         structure = []
         full_path = os.path.join(base_path, path) if path else base_path
 
@@ -684,32 +697,44 @@ class RepoManagerCodeProviderWrapper(ICodeProvider):
             return structure
 
         try:
-            for item in os.listdir(full_path):
-                # Skip .git directory only
+            for item in sorted(os.listdir(full_path)):
+                # Skip .git directory
                 if item == ".git":
                     continue
 
                 item_path = os.path.join(full_path, item)
                 rel_path = os.path.join(path, item) if path else item
 
-                item_info = {
-                    "name": item,
-                    "path": rel_path,
-                    "type": "directory" if os.path.isdir(item_path) else "file",
-                }
+                # Normalise separators for cross-platform pathspec matching
+                rel_path_norm = rel_path.replace("\\", "/")
 
                 if os.path.isdir(item_path):
-                    # Recursively get subdirectory structure if within max_depth
+                    if _ignore_spec and _ignore_spec.match_file(rel_path_norm + "/"):
+                        continue
+                    item_info = {
+                        "name": item,
+                        "path": rel_path,
+                        "type": "directory",
+                    }
                     if max_depth > 1:
                         item_info["children"] = self._build_structure_from_filesystem(
-                            base_path, rel_path, max_depth - 1
+                            base_path, rel_path, max_depth - 1,
+                            _ignore_spec=_ignore_spec,
+                            _ignore_spec_loaded=True,
                         )
                 else:
-                    # Add file size
+                    if _ignore_spec and _ignore_spec.match_file(rel_path_norm):
+                        continue
                     try:
-                        item_info["size"] = os.path.getsize(item_path)
+                        size = os.path.getsize(item_path)
                     except Exception:
-                        item_info["size"] = 0
+                        size = 0
+                    item_info = {
+                        "name": item,
+                        "path": rel_path,
+                        "type": "file",
+                        "size": size,
+                    }
 
                 structure.append(item_info)
 
