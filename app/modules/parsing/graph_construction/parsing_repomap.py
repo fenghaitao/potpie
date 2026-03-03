@@ -616,7 +616,7 @@ class RepoMap:
 
         # Load combined ignore patterns (.gitignore + .potpieignore)
         from app.modules.code_provider.ignore_spec import load_ignore_spec
-        _potpieignore_spec = load_ignore_spec(repo_dir)
+        _ignore_spec = load_ignore_spec(repo_dir)
 
         for root, dirs, files in os.walk(repo_dir):
             # Get relative path from repo_dir to avoid skipping paths that contain .repos_local etc.
@@ -654,11 +654,11 @@ class RepoMap:
             ):
                 continue
 
-            # Prune dirs in-place to skip .potpieignore-matched directories
-            if _potpieignore_spec:
+            # Prune dirs in-place to skip ignored directories
+            if _ignore_spec:
                 dirs[:] = [
                     d for d in dirs
-                    if not _potpieignore_spec.match_file(
+                    if not _ignore_spec.match_file(
                         os.path.relpath(os.path.join(root, d), repo_dir) + "/"
                     )
                 ]
@@ -667,8 +667,8 @@ class RepoMap:
                 file_path = os.path.join(root, file)
                 file_rel_path = os.path.relpath(file_path, repo_dir)
 
-                # Skip files matching .potpieignore patterns
-                if _potpieignore_spec and _potpieignore_spec.match_file(file_rel_path):
+                # Skip files matching ignore patterns
+                if _ignore_spec and _ignore_spec.match_file(file_rel_path):
                     continue
 
                 if not self.parse_helper.is_text_file(file_path):
