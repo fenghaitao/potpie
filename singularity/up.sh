@@ -32,12 +32,12 @@ if [ ! -f postgres.sif ] || [ ! -f neo4j.sif ] || [ ! -f redis.sif ]; then
 fi
 
 # Ensure postgres data dir exists (created on fresh clone since no placeholder is tracked)
-PG_DATA_DIR="$(dirname "$0")/potpie-data/postgres"
+PG_DATA_DIR="potpie-data/postgres"
 mkdir -p "$PG_DATA_DIR"
 
 # Clean up stale postgres files if postgres is not actually running
-POSTMASTER_PID="$(dirname "$0")/potpie-data/postgres/postmaster.pid"
-PG_RUN_DIR="$(dirname "$0")/potpie-data/run/postgresql"
+POSTMASTER_PID="potpie-data/postgres/postmaster.pid"
+PG_RUN_DIR="potpie-data/run/postgresql"
 if [ -f "$POSTMASTER_PID" ]; then
     STALE_PID=$(head -1 "$POSTMASTER_PID")
     if ! kill -0 "$STALE_PID" 2>/dev/null; then
