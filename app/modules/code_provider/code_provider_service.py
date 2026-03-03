@@ -471,6 +471,8 @@ class ProviderWrapper:
                     structure = provider.get_repository_structure(
                         repo_name=repo_name, path=path or "", ref=ref, max_depth=4
                     )
+                    if isinstance(structure, list):
+                        return self._format_structure_list(structure)
                     return structure
 
             # For local repos detected by path, always use LocalProvider directly
@@ -498,6 +500,8 @@ class ProviderWrapper:
                     structure = provider.get_repository_structure(
                         repo_name=repo_name, path=path or "", ref=ref, max_depth=4
                     )
+                    if isinstance(structure, list):
+                        return self._format_structure_list(structure)
                     return structure
 
                 # Fallback to GithubService for remote-only access
@@ -520,7 +524,8 @@ class ProviderWrapper:
             structure = provider.get_repository_structure(
                 repo_name=repo_name, path=path or "", ref=ref, max_depth=4
             )
-
+            if isinstance(structure, list):
+                return self._format_structure_list(structure)
             return structure
         except HTTPException:
             # Re-raise HTTP exceptions from GithubService
