@@ -133,29 +133,17 @@ class LocalRepoService:
 
     def _get_gitignore_spec(self, repo_path: str) -> Optional[pathspec.PathSpec]:
         """
-        Create a PathSpec object from the .gitignore file in the repository.
+        Get combined ignore PathSpec for the repository (.gitignore + .potpieignore).
 
         Args:
             repo_path: Path to the repository root
 
         Returns:
-            PathSpec object or None if .gitignore doesn't exist
+            PathSpec object combining all ignore patterns
         """
-        gitignore_path = os.path.join(repo_path, ".gitignore")
-        if not os.path.exists(gitignore_path):
-            return None
+        from app.modules.code_provider.ignore_spec import load_ignore_spec
 
-        try:
-            with open(gitignore_path, "r", encoding="utf-8") as f:
-                gitignore_content = f.read()
-
-            # Create a PathSpec object from the .gitignore content
-            return pathspec.PathSpec.from_lines(
-                pathspec.patterns.GitWildMatchPattern, gitignore_content.splitlines()
-            )
-        except Exception as e:
-            logger.warning(f"Error reading .gitignore file: {str(e)}")
-            return None
+        return load_ignore_spec(repo_path)
 
     async def _fetch_repo_structure_async(
         self,

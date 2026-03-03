@@ -64,38 +64,17 @@ class LocalProvider(ICodeProvider):
 
     def _get_gitignore_spec(self, repo_path: str) -> Optional[pathspec.PathSpec]:
         """
-        Get gitignore PathSpec for the repository.
+        Get combined ignore PathSpec for the repository (.gitignore + .potpieignore).
 
         Args:
             repo_path: Absolute path to repository
 
         Returns:
-            PathSpec object or None if no .gitignore exists
+            PathSpec object combining all ignore patterns
         """
-        gitignore_path = os.path.join(repo_path, ".gitignore")
+        from app.modules.code_provider.ignore_spec import load_ignore_spec
 
-        if not os.path.exists(gitignore_path):
-            return None
-
-        try:
-            with open(gitignore_path, "r", encoding="utf-8") as f:
-                patterns = f.read().splitlines()
-
-            # Add common exclusions
-            patterns.extend(
-                [
-                    ".git",
-                    "__pycache__",
-                    "*.pyc",
-                    "node_modules",
-                    ".DS_Store",
-                ]
-            )
-
-            return pathspec.PathSpec.from_lines("gitwildmatch", patterns)
-        except Exception as e:
-            logger.warning(f"Error reading .gitignore: {e}")
-            return None
+        return load_ignore_spec(repo_path)
 
     def _should_include_file(self, file_path: str) -> bool:
         """
