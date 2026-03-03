@@ -31,9 +31,9 @@ if [ ! -f postgres.sif ] || [ ! -f neo4j.sif ] || [ ! -f redis.sif ]; then
     $SINGULARITY_COMPOSE build
 fi
 
-# Remove .gitignore placeholder so initdb can initialize the data dir on first run
+# Ensure postgres data dir exists (created on fresh clone since no placeholder is tracked)
 PG_DATA_DIR="$(dirname "$0")/potpie-data/postgres"
-rm -f "$PG_DATA_DIR/.gitignore"
+mkdir -p "$PG_DATA_DIR"
 
 # Clean up stale postgres files if postgres is not actually running
 POSTMASTER_PID="$(dirname "$0")/potpie-data/postgres/postmaster.pid"
