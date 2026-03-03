@@ -614,18 +614,9 @@ class RepoMap:
         references = defaultdict(set)
         seen_relationships = set()
 
-        # Load .potpieignore patterns for filtering
-        _potpieignore_spec = None
-        _potpieignore_path = os.path.join(repo_dir, ".potpieignore")
-        if os.path.exists(_potpieignore_path):
-            try:
-                import pathspec
-                with open(_potpieignore_path, "r", encoding="utf-8") as _f:
-                    _potpieignore_spec = pathspec.PathSpec.from_lines(
-                        pathspec.patterns.GitWildMatchPattern, _f.read().splitlines()
-                    )
-            except Exception:
-                pass
+        # Load combined ignore patterns (.gitignore + .potpieignore)
+        from app.modules.code_provider.ignore_spec import load_ignore_spec
+        _potpieignore_spec = load_ignore_spec(repo_dir)
 
         for root, dirs, files in os.walk(repo_dir):
             # Get relative path from repo_dir to avoid skipping paths that contain .repos_local etc.
