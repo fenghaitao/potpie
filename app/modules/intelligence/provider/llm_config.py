@@ -292,6 +292,172 @@ MODEL_CONFIG_MAP = {
         "base_url": None,
         "api_version": None,
     },
+    # ------------------------------------------------------------------ #
+    # Copilot CLI SDK models (auth_provider="copilot_cli")               #
+    # Routes through the github-copilot-sdk package (CopilotModel),      #
+    # not LiteLLM.  No API key required — uses local copilot CLI auth.   #
+    # Model names must exactly match what `copilot model list` reports.  #
+    # ------------------------------------------------------------------ #
+
+    # Claude models
+    "copilot_cli/claude-sonnet-4.6": {
+        "provider": "copilot_cli",
+        "auth_provider": "copilot_cli",
+        "context_window": 200000,
+        "default_params": {"temperature": 0.3},
+        "capabilities": {
+            "supports_pydantic": True,
+            "supports_streaming": True,
+            "supports_vision": False,
+            "supports_tool_parallelism": True,
+        },
+        "base_url": None,
+        "api_version": None,
+    },
+    "copilot_cli/claude-sonnet-4.5": {
+        "provider": "copilot_cli",
+        "auth_provider": "copilot_cli",
+        "context_window": 200000,
+        "default_params": {"temperature": 0.3},
+        "capabilities": {
+            "supports_pydantic": True,
+            "supports_streaming": True,
+            "supports_vision": False,
+            "supports_tool_parallelism": True,
+        },
+        "base_url": None,
+        "api_version": None,
+    },
+    "copilot_cli/claude-haiku-4.5": {
+        "provider": "copilot_cli",
+        "auth_provider": "copilot_cli",
+        "context_window": 200000,
+        "default_params": {"temperature": 0.3},
+        "capabilities": {
+            "supports_pydantic": True,
+            "supports_streaming": True,
+            "supports_vision": False,
+            "supports_tool_parallelism": True,
+        },
+        "base_url": None,
+        "api_version": None,
+    },
+    "copilot_cli/claude-opus-4.6": {
+        "provider": "copilot_cli",
+        "auth_provider": "copilot_cli",
+        "context_window": 200000,
+        "default_params": {"temperature": 0.3},
+        "capabilities": {
+            "supports_pydantic": True,
+            "supports_streaming": True,
+            "supports_vision": False,
+            "supports_tool_parallelism": True,
+        },
+        "base_url": None,
+        "api_version": None,
+    },
+    "copilot_cli/claude-opus-4.5": {
+        "provider": "copilot_cli",
+        "auth_provider": "copilot_cli",
+        "context_window": 200000,
+        "default_params": {"temperature": 0.3},
+        "capabilities": {
+            "supports_pydantic": True,
+            "supports_streaming": True,
+            "supports_vision": False,
+            "supports_tool_parallelism": True,
+        },
+        "base_url": None,
+        "api_version": None,
+    },
+    "copilot_cli/claude-sonnet-4": {
+        "provider": "copilot_cli",
+        "auth_provider": "copilot_cli",
+        "context_window": 200000,
+        "default_params": {"temperature": 0.3},
+        "capabilities": {
+            "supports_pydantic": True,
+            "supports_streaming": True,
+            "supports_vision": False,
+            "supports_tool_parallelism": True,
+        },
+        "base_url": None,
+        "api_version": None,
+    },
+
+    # OpenAI GPT models
+    "copilot_cli/gpt-5.2": {
+        "provider": "copilot_cli",
+        "auth_provider": "copilot_cli",
+        "context_window": 128000,
+        "default_params": {"temperature": 0.3},
+        "capabilities": {
+            "supports_pydantic": True,
+            "supports_streaming": True,
+            "supports_vision": False,
+            "supports_tool_parallelism": True,
+        },
+        "base_url": None,
+        "api_version": None,
+    },
+    "copilot_cli/gpt-5.1": {
+        "provider": "copilot_cli",
+        "auth_provider": "copilot_cli",
+        "context_window": 128000,
+        "default_params": {"temperature": 0.3},
+        "capabilities": {
+            "supports_pydantic": True,
+            "supports_streaming": True,
+            "supports_vision": False,
+            "supports_tool_parallelism": True,
+        },
+        "base_url": None,
+        "api_version": None,
+    },
+    "copilot_cli/gpt-5-mini": {
+        "provider": "copilot_cli",
+        "auth_provider": "copilot_cli",
+        "context_window": 128000,
+        "default_params": {"temperature": 0.3},
+        "capabilities": {
+            "supports_pydantic": True,
+            "supports_streaming": True,
+            "supports_vision": False,
+            "supports_tool_parallelism": True,
+        },
+        "base_url": None,
+        "api_version": None,
+    },
+
+    # Google Gemini models
+    "copilot_cli/gemini-3-pro": {
+        "provider": "copilot_cli",
+        "auth_provider": "copilot_cli",
+        "context_window": 1000000,
+        "default_params": {"temperature": 0.3},
+        "capabilities": {
+            "supports_pydantic": True,
+            "supports_streaming": True,
+            "supports_vision": False,
+            "supports_tool_parallelism": True,
+        },
+        "base_url": None,
+        "api_version": None,
+    },
+    "copilot_cli/gpt-4.1": {
+        "provider": "copilot_cli",
+        "auth_provider": "copilot_cli",
+        "context_window": 1047576,
+        "default_params": {"temperature": 0.3},
+        "capabilities": {
+            "supports_pydantic": True,
+            "supports_streaming": True,
+            "supports_vision": False,
+            "supports_tool_parallelism": True,
+        },
+        "base_url": None,
+        "api_version": None,
+    },
 }
 
 
@@ -393,6 +559,7 @@ def get_config_for_model(model_string: str) -> Dict[str, Any]:
         "azure",
         "ollama",
         "github_copilot",
+        "copilot_cli",
     }
     return {
         "provider": provider,

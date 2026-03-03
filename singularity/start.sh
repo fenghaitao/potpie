@@ -103,12 +103,20 @@ alembic upgrade heads
 echo "Starting momentum application..."
 gunicorn --worker-class uvicorn.workers.UvicornWorker --workers 1 --timeout 1800 --bind 0.0.0.0:8001 --log-level debug app.main:app &
 
-# Wait for neo4j bolt port to be ready
+# Wait for neo4j bolt port to be ready.
+# Phase 1: fast TCP check (no JVM spawn per iteration) until the port opens.
+# Phase 2: one-time cypher-shell auth check once the port is accepting connections.
 echo "Waiting for neo4j to be ready..."
+NEO4J_BOLT_PORT="${SNG_NEO4J_BOLT_PORT:-7687}"
 NEO4J_PASSWORD="${NEO4J_PASSWORD:-mysecretpassword}"
-until singularity exec instance://neo4j1 cypher-shell -u neo4j -p "${NEO4J_PASSWORD}" "RETURN 1" >/dev/null 2>&1; do
+until (echo >/dev/tcp/127.0.0.1/${NEO4J_BOLT_PORT}) >/dev/null 2>&1; do
   echo "Neo4j is unavailable - sleeping"
-  sleep 5
+  sleep 3
+done
+# Port is open - now verify auth is accepted (bolt handshake can still lag)
+until singularity exec instance://neo4j1 cypher-shell -u neo4j -p "${NEO4J_PASSWORD}" "RETURN 1" >/dev/null 2>&1; do
+  echo "Neo4j port open but auth not ready - sleeping"
+  sleep 3
 done
 echo "Neo4j is up"
 

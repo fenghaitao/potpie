@@ -975,8 +975,14 @@ async def _eval(project_id: str, agent_id: str, cases_path: Optional[str], concu
 
         # Point the LLM judge at the same model we use for everything else
         import os
+        from app.modules.intelligence.provider.copilot_model import CopilotModel
         judge_model_name = os.environ.get("CHAT_MODEL", "github_copilot/gpt-4o")
-        set_default_judge_model(LiteLLMModel(judge_model_name))
+        if judge_model_name.startswith("copilot_cli/"):
+            # Strip the "copilot_cli/" prefix — CopilotModel takes the bare model name
+            bare_name = judge_model_name.split("/", 1)[1]
+            set_default_judge_model(CopilotModel(bare_name))
+        else:
+            set_default_judge_model(LiteLLMModel(judge_model_name))
 
         # Load cases
         if cases_path:

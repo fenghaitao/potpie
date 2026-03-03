@@ -481,6 +481,79 @@ AVAILABLE_MODELS = [
         is_chat_model=True,
         is_inference_model=True,
     ),
+    # Copilot CLI SDK models — use the github-copilot-sdk (CopilotModel), no API key required
+    AvailableModelOption(
+        id="copilot_cli/claude-sonnet-4.6",
+        name="Copilot CLI Claude Sonnet 4.6",
+        description="Claude Sonnet 4.6 via the GitHub Copilot CLI SDK (no API key required)",
+        provider="copilot_cli",
+        is_chat_model=True,
+        is_inference_model=True,
+    ),
+    AvailableModelOption(
+        id="copilot_cli/claude-sonnet-4.5",
+        name="Copilot CLI Claude Sonnet 4.5",
+        description="Claude Sonnet 4.5 via the GitHub Copilot CLI SDK (no API key required)",
+        provider="copilot_cli",
+        is_chat_model=True,
+        is_inference_model=True,
+    ),
+    AvailableModelOption(
+        id="copilot_cli/claude-haiku-4.5",
+        name="Copilot CLI Claude Haiku 4.5",
+        description="Claude Haiku 4.5 via the GitHub Copilot CLI SDK (no API key required)",
+        provider="copilot_cli",
+        is_chat_model=False,
+        is_inference_model=True,
+    ),
+    AvailableModelOption(
+        id="copilot_cli/claude-opus-4.6",
+        name="Copilot CLI Claude Opus 4.6",
+        description="Claude Opus 4.6 via the GitHub Copilot CLI SDK (no API key required)",
+        provider="copilot_cli",
+        is_chat_model=True,
+        is_inference_model=False,
+    ),
+    AvailableModelOption(
+        id="copilot_cli/gpt-5.2",
+        name="Copilot CLI GPT-5.2",
+        description="GPT-5.2 via the GitHub Copilot CLI SDK (no API key required)",
+        provider="copilot_cli",
+        is_chat_model=True,
+        is_inference_model=True,
+    ),
+    AvailableModelOption(
+        id="copilot_cli/gpt-5.1",
+        name="Copilot CLI GPT-5.1",
+        description="GPT-5.1 via the GitHub Copilot CLI SDK (no API key required)",
+        provider="copilot_cli",
+        is_chat_model=True,
+        is_inference_model=True,
+    ),
+    AvailableModelOption(
+        id="copilot_cli/gpt-5-mini",
+        name="Copilot CLI GPT-5 mini",
+        description="GPT-5 mini via the GitHub Copilot CLI SDK (no API key required)",
+        provider="copilot_cli",
+        is_chat_model=False,
+        is_inference_model=True,
+    ),
+    AvailableModelOption(
+        id="copilot_cli/gemini-3-pro",
+        name="Copilot CLI Gemini 3 Pro",
+        description="Gemini 3 Pro (Preview) via the GitHub Copilot CLI SDK (no API key required)",
+        provider="copilot_cli",
+        is_chat_model=True,
+        is_inference_model=True,
+    ),
+    AvailableModelOption(
+        id="copilot_cli/gpt-4.1",
+        name="Copilot CLI GPT-4.1",
+        description="GPT-4.1 via the GitHub Copilot CLI SDK — free tier (no API key required)",
+        provider="copilot_cli",
+        is_chat_model=True,
+        is_inference_model=True,
+    ),
 ]
 
 # Extract unique platform providers from the available models
@@ -1358,7 +1431,7 @@ class ProviderService:
         if not api_key:
             api_key = os.environ.get("LLM_API_KEY", api_key)
 
-        if not api_key and config.auth_provider not in {"ollama", "github_copilot"}:
+        if not api_key and config.auth_provider not in {"ollama", "github_copilot", "copilot_cli"}:
             raise UnsupportedProviderError(
                 f"API key not found for provider '{config.auth_provider}'."
             )
@@ -1379,6 +1452,13 @@ class ProviderService:
             provider_kwargs["api_version"] = config.api_version
 
         openai_like_providers = {"openai", "openrouter", "azure", "ollama", "github_copilot"}
+
+        # copilot_cli uses the GitHub Copilot CLI SDK (github-copilot-sdk package)
+        # instead of the LiteLLM OAuth path — no API key required.
+        if config.auth_provider == "copilot_cli":
+            from app.modules.intelligence.provider.copilot_model import CopilotModel
+            return CopilotModel(model_name)
+
         if config.auth_provider in openai_like_providers:
             if config.auth_provider == "ollama":
                 base_url_root = (
