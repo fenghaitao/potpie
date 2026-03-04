@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=42"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "repowiki"
+version = "0.1.0"
+description = "Analyzes Python, TypeScript, and C++ source files and generates structured Markdown documentation."
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+repowiki = "repowiki.cli:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "hypothesis>=6.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.setuptools.packages.find]
+where = ["."]
