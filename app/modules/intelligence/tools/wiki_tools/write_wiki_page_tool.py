@@ -14,15 +14,16 @@ WIKI_ROOT = Path(".qoder/repowiki/en/content")
 
 VALID_SECTIONS = [
     "API Reference",
-    "Authentication & Authorization",
-    "Code Parsing & Knowledge Graph",
-    "Conversations & Messaging",
-    "Core Architecture",
-    "Data Management",
-    "Deployment & Operations",
+    "Architecture & Design",
+    "Authentication & Security",
+    "Core Modules",
+    "Data Models & Persistence",
+    "Deployment & Infrastructure",
+    "Development Guide",
     "External Integrations",
-    "Intelligence Engine",
     "Project Overview",
+    "System Requirements",
+    "Root",
 ]
 
 
@@ -59,7 +60,9 @@ def _write_wiki_page(
 ) -> str:
     """Write a wiki page to .qoder/repowiki/en/content/<section>/[subsection/]<page_title>.md"""
     try:
-        if subsection:
+        if section == "Root":
+            page_dir = WIKI_ROOT
+        elif subsection:
             page_dir = WIKI_ROOT / section / subsection
         else:
             page_dir = WIKI_ROOT / section

@@ -107,6 +107,7 @@ from .todo_management_tool import create_todo_management_tools
 from .code_changes_manager import create_code_changes_management_tools
 from .requirement_verification_tool import create_requirement_verification_tools
 from .wiki_tools.write_wiki_page_tool import get_write_wiki_page_tool
+from .wiki_tools.list_wiki_pages_tool import get_list_wiki_pages_tool
 
 
 logger = setup_logger(__name__)
@@ -280,8 +281,9 @@ class ToolService:
         for tool in requirement_tools:
             tools[tool.name] = tool
 
-        # Add wiki page writing tool
+        # Add wiki page writing tools
         tools["write_wiki_page"] = get_write_wiki_page_tool()
+        tools["list_wiki_pages"] = get_list_wiki_pages_tool()
 
         if self.webpage_extractor_tool:
             tools["webpage_extractor"] = self.webpage_extractor_tool
