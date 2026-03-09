@@ -10,7 +10,7 @@ from app.modules.utils.logger import setup_logger
 logger = setup_logger(__name__)
 
 # Root of the wiki relative to the workspace
-WIKI_ROOT = Path(".qoder/repowiki/en/content")
+WIKI_ROOT = Path(".repowiki/en/content")
 
 VALID_SECTIONS = [
     "API Reference",

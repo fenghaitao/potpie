@@ -508,7 +508,7 @@ async def _code(description: str, project_id: Optional[str], preview: bool):
               help='Generate only a specific section, e.g. "Core Architecture"')
 def wiki(project: Optional[str], query: str, section: Optional[str]):
     """
-    📖 Generate wiki pages for a project into .qoder/repowiki/.
+    📖 Generate wiki pages for a project into .repowiki/.
 
     Examples:
         potpie-cli wiki                                      # Generate full wiki for last project
@@ -546,7 +546,7 @@ async def _wiki(project_id: Optional[str], query: str):
         console.print(Panel.fit(
             f"[bold cyan]Project:[/bold cyan] {project_info.repo_name}\n"
             f"[bold cyan]Project ID:[/bold cyan] {project_id}\n"
-            f"[bold cyan]Output:[/bold cyan] .qoder/repowiki/en/content/\n"
+            f"[bold cyan]Output:[/bold cyan] .repowiki/en/content/\n"
             f"[bold cyan]Query:[/bold cyan] {query}",
             title="📖 Wiki Generation",
             border_style="cyan"
@@ -556,7 +556,7 @@ async def _wiki(project_id: Optional[str], query: str):
             project_id=project_id,
             project_name=project_info.repo_name,
             curr_agent_id="wiki_agent",
-            query=query,
+            query=f"[Codebase: {project_info.repo_name}, project_id: {project_id}] {query}",
             history=[],
             user_id=ctx_obj.default_user_id,
             conversation_id=f"wiki_{project_id}",
@@ -581,7 +581,7 @@ async def _wiki(project_id: Optional[str], query: str):
             for p in pages_written:
                 console.print(f"   [cyan]{p}[/cyan]")
         else:
-            console.print("[yellow]Wiki generation complete. Check .qoder/repowiki/en/content/ for output.[/yellow]")
+            console.print("[yellow]Wiki generation complete. Check .repowiki/en/content/ for output.[/yellow]")
 
     except Exception as e:
         console.print(f"[bold red]Error:[/bold red] {e}")

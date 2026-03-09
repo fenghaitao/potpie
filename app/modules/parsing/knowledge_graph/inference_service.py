@@ -32,15 +32,20 @@ logger = setup_logger(__name__)
 
 # Global singleton for SentenceTransformer to avoid reloading
 _embedding_model = None
+_embedding_model_lock = __import__("threading").Lock()
 
 
 def get_embedding_model():
-    """Get the singleton SentenceTransformer model, loading it only once per process."""
+    """Get the singleton SentenceTransformer model, loading it only once per process.
+    Thread-safe via double-checked locking."""
     global _embedding_model
-    if _embedding_model is None:
-        logger.info("Loading SentenceTransformer model (first time only)")
-        _embedding_model = SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
-        logger.info("SentenceTransformer model loaded successfully")
+    if _embedding_model is not None:
+        return _embedding_model
+    with _embedding_model_lock:
+        if _embedding_model is None:
+            logger.info("Loading SentenceTransformer model (first time only)")
+            _embedding_model = SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
+            logger.info("SentenceTransformer model loaded successfully")
     return _embedding_model
 
 

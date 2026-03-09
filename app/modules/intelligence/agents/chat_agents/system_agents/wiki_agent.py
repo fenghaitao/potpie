@@ -77,7 +77,11 @@ class WikiAgent(ChatAgent):
         ])
 
         supports_pydantic = self.llm_provider.supports_pydantic("chat")
-        should_use_multi = MultiAgentConfig.should_use_multi_agent("wiki_agent")
+        # TODO: re-enable multi-agent once pydantic-ai fixes the "Cannot apply a tool call delta
+        # to existing_part=TextPart" stream error that occurs when the LLM emits text then a tool
+        # call in the same response turn.
+        # should_use_multi = supports_pydantic
+        should_use_multi = False
 
         logger.info(
             f"WikiAgent: supports_pydantic={supports_pydantic}, should_use_multi={should_use_multi}"
@@ -125,7 +129,7 @@ class WikiAgent(ChatAgent):
 
     async def _enriched_context(self, ctx: ChatContext) -> ChatContext:
         """Enrich context with project structure information."""
-        
+
         # Get file structure for overview
         file_structure = (
             await self.tools_provider.file_structure_tool.fetch_repo_structure(
@@ -133,14 +137,14 @@ class WikiAgent(ChatAgent):
             )
         )
         ctx.additional_context += f"\nProject File Structure:\n{file_structure}\n"
-        
+
         # If specific nodes requested, get their code
         if ctx.node_ids and len(ctx.node_ids) > 0:
             code_results = await self.tools_provider.get_code_from_multiple_node_ids_tool.run_multiple(
                 ctx.project_id, ctx.node_ids
             )
             ctx.additional_context += f"\nTarget Code for Documentation:\n{code_results}\n"
-        
+
         return ctx
 
     async def run(self, ctx: ChatContext) -> ChatAgentResponse:

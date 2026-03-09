@@ -179,7 +179,7 @@ class GetCodeFromProbableNodeNameTool:
         adjusted_start_line = max(0, start_line - 3) if start_line is not None else 0
 
         code_content = CodeProviderService(self.sql_db).get_file_content(
-            project.repo_name,
+            project.repo_path or project.repo_name,
             relative_file_path,
             adjusted_start_line,
             end_line,

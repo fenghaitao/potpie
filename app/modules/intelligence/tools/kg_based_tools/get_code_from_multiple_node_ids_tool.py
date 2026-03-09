@@ -130,7 +130,7 @@ class GetCodeFromMultipleNodeIdsTool:
         relative_file_path = self._get_relative_file_path(file_path)
 
         code_content = CodeProviderService(self.sql_db).get_file_content(
-            project.repo_name,
+            project.repo_path or project.repo_name,
             relative_file_path,
             start_line,
             end_line,
