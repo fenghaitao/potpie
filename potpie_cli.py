@@ -564,8 +564,13 @@ async def _wiki(project_id: Optional[str], query: str):
 
         console.print("\n[bold green]🤖 Wiki Agent:[/bold green] generating...\n")
 
+        from potpie.agents.context import ToolCallEventType
         pages_written = []
         async for chunk in agent.stream(ctx):
+            if chunk.tool_calls:
+                for tc in chunk.tool_calls:
+                    if tc.event_type == ToolCallEventType.CALL:
+                        console.print(f"\n[dim cyan]🔧 {tc.tool_name}[/dim cyan]", end="", markup=True)
             if chunk.response:
                 console.print(chunk.response, end="", markup=False)
                 # track written pages from tool output lines
