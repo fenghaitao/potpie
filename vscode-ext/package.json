@@ -1,0 +1,352 @@
+{
+	"name": "repo-wiki",
+	"displayName": "Repo Wiki",
+	"description": "View and navigate CodeWiki repository documentation directly in VS Code",
+	"version": "0.2.0",
+	"publisher": "codewiki",
+	"license": "MIT",
+	"icon": "resources/RepoWiki.png",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/intel-sandbox/RepoWiki"
+	},
+	"bugs": {
+		"url": "https://github.com/intel-sandbox/RepoWiki/issues"
+	},
+	"homepage": "https://github.com/intel-sandbox/RepoWiki#readme",
+	"engines": {
+		"vscode": "^1.85.0"
+	},
+	"categories": [
+		"Visualization",
+		"Programming Languages",
+		"Other"
+	],
+	"keywords": [
+		"codewiki",
+		"wiki",
+		"documentation",
+		"markdown",
+		"mermaid",
+		"diagrams",
+		"code-analysis",
+		"repository"
+	],
+	"activationEvents": [],
+	"main": "./dist/extension.js",
+	"contributes": {
+		"viewsContainers": {
+			"activitybar": [
+				{
+					"id": "codewiki-container",
+					"title": "Repo Wiki",
+					"icon": "resources/RepoWiki.svg"
+				}
+			]
+		},
+		"views": {
+			"codewiki-container": [
+				{
+					"id": "codewiki",
+					"name": "Repository Wiki",
+					"contextualTitle": "CodeWiki Repository Documentation",
+					"visibility": "visible"
+				}
+			]
+		},
+		"viewsWelcome": [
+			{
+				"view": "codewiki",
+				"when": "workspaceFolderCount == 0",
+				"contents": "No folder opened.\n\nOpen a folder to view its wiki documentation."
+			},
+			{
+				"view": "codewiki",
+				"when": "workspaceFolderCount > 0 && !codewiki.hasWiki && !codewiki.isGenerating && !codewiki.hasBothWikis",
+				"contents": "No wiki documentation found in this workspace.\n\n[$(sparkle) Generate DeepWiki](command:codewiki.generateDeepWiki)\nDeep analysis with enhanced AI-powered insights"
+			},
+			{
+				"view": "codewiki",
+				"when": "codewiki.isGenerating",
+				"contents": "⏳ Generating wiki documentation...\n\nPlease wait while the repository is being analyzed."
+			},
+			{
+				"view": "codewiki",
+				"when": "codewiki.hasBothWikis && !codewiki.hasWiki",
+				"contents": "Both CodeWiki and DeepWiki are available.\n\nSelect a wiki type to view:\n\n[$(file-code) View CodeWiki](command:codewiki.viewCodeWiki)\n[$(sparkle) View DeepWiki](command:codewiki.viewDeepWiki)"
+			}
+		],
+		"commands": [
+			{
+				"command": "codewiki.generate",
+				"title": "Generate Wiki from Repo",
+				"icon": "$(sparkle)",
+				"category": "Repo Wiki"
+			},
+			{
+				"command": "codewiki.generateCodeWiki",
+				"title": "Generate CodeWiki",
+				"icon": "$(file-code)",
+				"category": "Repo Wiki"
+			},
+			{
+				"command": "codewiki.generateDeepWiki",
+				"title": "Generate DeepWiki",
+				"icon": "$(sparkle)",
+				"category": "Repo Wiki"
+			},
+			{
+				"command": "codewiki.selectWikiType",
+				"title": "Switch Wiki Type",
+				"icon": "$(list-selection)",
+				"category": "Repo Wiki"
+			},
+			{
+				"command": "codewiki.viewCodeWiki",
+				"title": "View CodeWiki",
+				"icon": "$(file-code)",
+				"category": "Repo Wiki"
+			},
+			{
+				"command": "codewiki.viewDeepWiki",
+				"title": "View DeepWiki",
+				"icon": "$(sparkle)",
+				"category": "Repo Wiki"
+			},
+			{
+				"command": "codewiki.refresh",
+				"title": "Refresh",
+				"icon": "$(refresh)",
+				"category": "Repo Wiki"
+			},
+			{
+				"command": "codewiki.openFile",
+				"title": "Open Wiki File",
+				"category": "Repo Wiki"
+			},
+			{
+				"command": "codewiki.openInEditor",
+				"title": "Open in Editor",
+				"category": "Repo Wiki"
+			},
+			{
+				"command": "codewiki.showDebugOutput",
+				"title": "Show Debug Output",
+				"icon": "$(output)",
+				"category": "Repo Wiki"
+			},
+			{
+				"command": "codewiki.showMermaidErrors",
+				"title": "Show Mermaid Errors",
+				"icon": "$(error)",
+				"category": "Repo Wiki"
+			},
+			{
+				"command": "codewiki.clearDebugOutput",
+				"title": "Clear Debug Output",
+				"icon": "$(clear-all)",
+				"category": "Repo Wiki"
+			},
+			{
+				"command": "codewiki.fixMermaidErrors",
+				"title": "Fix Mermaid Errors with Copilot",
+				"icon": "$(sparkle)",
+				"category": "Repo Wiki"
+			},
+			{
+				"command": "codewiki.showErrorReport",
+				"title": "Show Mermaid Error Report",
+				"icon": "$(report)",
+				"category": "Repo Wiki"
+			},
+			{
+				"command": "codewiki.copyPromptToClipboard",
+				"title": "Copy Mermaid Error Prompt to Clipboard",
+				"icon": "$(clippy)",
+				"category": "Repo Wiki"
+			},
+			{
+				"command": "codewiki.checkGitHubToken",
+				"title": "Check/Clear GitHub Token (Debug)",
+				"icon": "$(key)",
+				"category": "Repo Wiki"
+			},
+			{
+				"command": "codewiki.evaluateWiki",
+				"title": "Evaluate Wiki",
+				"icon": "$(beaker)",
+				"category": "Repo Wiki"
+			}
+		],
+		"submenus": [
+			{
+				"id": "codewiki.editorContextMenu",
+				"label": "Repo Wiki"
+			}
+		],
+		"menus": {
+			"editor/context": [
+				{
+					"submenu": "codewiki.editorContextMenu",
+					"when": "codewiki.hasCodeWiki || codewiki.hasDeepWiki",
+					"group": "z_repowiki"
+				}
+			],
+			"codewiki.editorContextMenu": [
+				{
+					"command": "codewiki.generateDeepWiki",
+					"when": "codewiki.hasCodeWiki && !codewiki.hasDeepWiki",
+					"group": "1_generate@1"
+				},
+				{
+					"command": "codewiki.generateCodeWiki",
+					"when": "codewiki.hasDeepWiki && !codewiki.hasCodeWiki",
+					"group": "1_generate@2"
+				},
+				{
+					"command": "codewiki.selectWikiType",
+					"when": "codewiki.hasBothWikis",
+					"group": "2_switch@1"
+				}
+			],
+			"editor/title": [
+				{
+					"command": "codewiki.evaluateWiki",
+					"when": "codewiki.hasWiki && !codewiki.isGenerating",
+					"group": "navigation"
+				}
+			],
+			"view/title": [
+				{
+					"command": "codewiki.refresh",
+					"when": "view == codewiki && codewiki.hasWiki",
+					"group": "navigation@1"
+				},
+				{
+					"command": "codewiki.selectWikiType",
+					"when": "view == codewiki && codewiki.hasBothWikis",
+					"group": "navigation@2"
+				},
+				{
+					"command": "codewiki.generateCodeWiki",
+					"when": "view == codewiki && !codewiki.isGenerating",
+					"group": "navigation@3"
+				},
+				{
+					"command": "codewiki.generateDeepWiki",
+					"when": "view == codewiki && !codewiki.isGenerating",
+					"group": "navigation@4"
+				},
+				{
+					"command": "codewiki.evaluateWiki",
+					"when": "view == codewiki && codewiki.hasWiki && !codewiki.isGenerating",
+					"group": "navigation@5"
+				}
+			]
+		},
+		"chatParticipants": [
+			{
+				"id": "repo-wiki.docs",
+				"name": "repowiki",
+				"description": "Search and answer questions using your project's AI-generated documentation (CodeWiki or DeepWiki)",
+				"isSticky": true
+			}
+		],
+		"configuration": {
+			"title": "Repo Wiki",
+			"properties": {
+				"codewiki.memoryBackend": {
+					"type": "string",
+					"enum": [
+						"chromadb",
+						"dspy"
+					],
+					"default": "chromadb",
+					"description": "Memory backend for indexing and searching documentation (chromadb or dspy-memory)",
+					"enumDescriptions": [
+						"ChromaDB - Lightweight vector database with category-aware retrieval",
+						"DSPy-Memory - DSPy-based memory system with advanced retrieval"
+					]
+				},
+				"codewiki.autoDetectMermaidErrors": {
+					"type": "boolean",
+					"default": false,
+					"description": "Automatically detect and prompt to fix Mermaid errors"
+				},
+				"codewiki.mermaid.theme": {
+					"type": "string",
+					"enum": [
+						"auto",
+						"default",
+						"dark",
+						"forest",
+						"neutral"
+					],
+					"default": "auto",
+					"description": "Theme for Mermaid diagrams"
+				},
+				"codewiki.maxFileSize": {
+					"type": "number",
+					"default": 10485760,
+					"description": "Maximum file size in bytes for processing (default: 10MB)",
+					"minimum": 1024,
+					"maximum": 104857600
+				},
+				"codewiki.enablePerformanceMonitoring": {
+					"type": "boolean",
+					"default": false,
+					"description": "Enable performance monitoring and logging"
+				},
+				"codewiki.debugMode": {
+					"type": "boolean",
+					"default": false,
+					"description": "Enable debug mode with verbose logging"
+				}
+			}
+		}
+	},
+	"scripts": {
+		"vscode:prepublish": "npm run build:prod",
+		"compile": "tsc -p ./",
+		"watch": "npm run build -- --watch",
+		"build": "node esbuild.js",
+		"build:prod": "node esbuild.js --production",
+		"package": "npm run build:prod && vsce package",
+		"compile-tests": "tsc -p . --outDir out",
+		"watch-tests": "tsc -p . -w --outDir out",
+		"pretest": "npm run compile-tests",
+		"test": "jest",
+		"test:watch": "jest --watch",
+		"test:coverage": "jest --coverage",
+		"test:integration": "jest tests/integration",
+		"lint": "eslint src --ext ts",
+		"lint:fix": "eslint src --ext ts --fix",
+		"format": "prettier --write \"src/**/*.ts\"",
+		"format:check": "prettier --check \"src/**/*.ts\"",
+		"scan:mermaid": "node scripts/scan-mermaid-errors.js",
+		"fix:mermaid": "node scripts/scan-mermaid-errors.js && echo '\n📋 Review MERMAID_FIX_PROMPT.txt and copy to Copilot'",
+		"clean": "rm -rf dist out coverage .jest-cache",
+		"analyze": "node esbuild.js --production --metafile && esbuild-visualizer --metadata dist/meta.json"
+	},
+	"dependencies": {
+		"marked": "^11.0.0",
+		"mermaid": "11.12.1"
+	},
+	"devDependencies": {
+		"@types/dompurify": "^3.0.5",
+		"@types/jest": "^29.5.14",
+		"@types/node": "^20.x",
+		"@types/vscode": "^1.85.0",
+		"@typescript-eslint/eslint-plugin": "^6.x",
+		"@typescript-eslint/parser": "^6.x",
+		"@vscode/vsce": "^3.7.0",
+		"dompurify": "^3.3.0",
+		"esbuild": "^0.19.12",
+		"eslint": "^8.x",
+		"jest": "^29.7.0",
+		"jsdom": "^27.2.0",
+		"prettier": "^3.8.0",
+		"ts-jest": "^29.4.5",
+		"typescript": "^5.3.0"
+	}
+}
