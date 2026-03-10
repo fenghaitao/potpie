@@ -1,0 +1,72 @@
+# Source files (not needed after bundling)
+src/**
+**/*.ts
+!out/**/*.d.ts
+tsconfig.json
+.eslintrc.json
+
+# Build artifacts
+**/*.map
+dist/**/*.map
+coverage/**
+.nyc_output/**
+.jest-cache/**
+
+# Exclude unbundled out directory (we use dist/ now)
+out/**
+
+# Development files
+.vscode/**
+.vscode-test/**
+.gitignore
+.yarnrc
+.editorconfig
+.prettierrc
+
+# Node modules (bundled via esbuild)
+node_modules/**
+!node_modules/mermaid/dist/mermaid.min.js
+
+# Test files
+**/*.test.ts
+**/*.spec.ts
+tests/**
+jest.config.js
+.prettierrc
+
+# Documentation
+*.md
+!README.md
+!CHANGELOG.md
+DEVELOPMENT.md
+
+# Scripts
+scripts/**
+esbuild.js
+
+# Build outputs to exclude
+out/test/**
+
+# Temporary files
+tmp/**
+temp/**
+*.tmp
+tmp_rovodev_*
+.kiro/**
+.qoder/**
+
+# Runtime-created directories (ChromaDB/DSPy repos)
+.adk-python-repo/**
+.dspy-repo/**
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Old VSIX packages
+*.vsix
+
+# Lock files
+package-lock.json
+yarn.lock
+pnpm-lock.yaml

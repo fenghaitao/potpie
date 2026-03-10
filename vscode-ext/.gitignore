@@ -1,0 +1,50 @@
+content
+out
+node_modules
+.vscode-test/
+*.vsix
+coverage/
+.nyc_output/
+.jest-cache/
+tmp_rovodev_*
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Dependencies
+node_modules/
+jspm_packages/
+
+# Build outputs
+dist/
+build/
+out/
+
+# IDE files
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+
+# Test outputs
+coverage/
+.nyc_output/
+.jest-cache/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+tmp_rovodev_*
