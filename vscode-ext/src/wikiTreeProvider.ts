@@ -24,7 +24,8 @@ export class WikiTreeItem extends vscode.TreeItem {
 		public readonly moduleKey?: string,
 		public readonly wikiType?: WikiType,
 		public readonly deepwikiSection?: DeepWikiSection,
-		public readonly deepwikiPage?: DeepWikiPage
+		public readonly deepwikiPage?: DeepWikiPage,
+		public readonly pagePath?: string  // optional page to open when clicking a folder
 	) {
 		// Remove .md suffix from display name, format module names nicely
 		let displayLabel = label.endsWith('.md') ? label.slice(0, -3) : label;
@@ -49,14 +50,15 @@ export class WikiTreeItem extends vscode.TreeItem {
 		this.tooltip = this.resourcePath;
 		this.contextValue = isOverview ? 'overview' : (isDirectory ? 'folder' : 'file');
 
-		// Only add command if there's a resource path (pages have files, sections don't)
-		if ((!isDirectory || isOverview) && this.resourcePath) {
+		// Add open command for non-directory items, overview, or folders that have a matching page
+		const openPath = pagePath ?? ((!isDirectory || isOverview) ? this.resourcePath : undefined);
+		if (openPath) {
 			this.command = {
 				command: 'codewiki.openFile',
 				title: 'Open Wiki File',
-				arguments: [this.resourcePath, wikiType]
+				arguments: [openPath, wikiType]
 			};
-			this.iconPath = isOverview 
+			this.iconPath = isOverview
 				? new vscode.ThemeIcon('home')
 				: new vscode.ThemeIcon('file');
 		} else {
@@ -117,6 +119,8 @@ export class CodeWikiTreeProvider implements vscode.TreeDataProvider<WikiTreeIte
 			return 'Repository Wiki';
 		} else if (this.selectedWikiType === WikiType.DeepWiki) {
 			return 'DeepWiki Documentation';
+		} else if (this.selectedWikiType === WikiType.QoderWiki) {
+			return 'QoderWiki';
 		}
 		
 		return 'Repository Wiki';
@@ -174,13 +178,19 @@ export class CodeWikiTreeProvider implements vscode.TreeDataProvider<WikiTreeIte
 					this.selectedWikiType = WikiType.CodeWiki;
 				} else if (persisted === WikiType.DeepWiki && this.wikiDetection.hasDeepWiki) {
 					this.selectedWikiType = WikiType.DeepWiki;
-				} else if (this.wikiDetection.hasCodeWiki && !this.wikiDetection.hasDeepWiki) {
+				} else if (persisted === WikiType.QoderWiki && this.wikiDetection.hasQoderWiki) {
+					this.selectedWikiType = WikiType.QoderWiki;
+				} else if (WikiTypeDetector.getWikiCount(this.wikiDetection) === 1) {
 					// Auto-select if only one exists
-					this.selectedWikiType = WikiType.CodeWiki;
-				} else if (this.wikiDetection.hasDeepWiki && !this.wikiDetection.hasCodeWiki) {
-					this.selectedWikiType = WikiType.DeepWiki;
+					if (this.wikiDetection.hasCodeWiki) {
+						this.selectedWikiType = WikiType.CodeWiki;
+					} else if (this.wikiDetection.hasDeepWiki) {
+						this.selectedWikiType = WikiType.DeepWiki;
+					} else if (this.wikiDetection.hasQoderWiki) {
+						this.selectedWikiType = WikiType.QoderWiki;
+					}
 				}
-				// If both or neither exist, selectedWikiType remains undefined
+				// If multiple or none exist, selectedWikiType remains undefined
 			}
 			
 			this.updateWikiPath();
@@ -190,8 +200,9 @@ export class CodeWikiTreeProvider implements vscode.TreeDataProvider<WikiTreeIte
 			vscode.commands.executeCommand('setContext', 'codewiki.hasWiki', this.hasWiki);
 			vscode.commands.executeCommand('setContext', 'codewiki.hasCodeWiki', this.wikiDetection.hasCodeWiki);
 			vscode.commands.executeCommand('setContext', 'codewiki.hasDeepWiki', this.wikiDetection.hasDeepWiki);
+			vscode.commands.executeCommand('setContext', 'codewiki.hasQoderWiki', this.wikiDetection.hasQoderWiki);
 			vscode.commands.executeCommand('setContext', 'codewiki.hasBothWikis', 
-				this.wikiDetection.hasCodeWiki && this.wikiDetection.hasDeepWiki);
+				WikiTypeDetector.getWikiCount(this.wikiDetection) >= 2);
 		} else {
 			this.workspaceRoot = undefined;
 			this.wikiPath = undefined;
@@ -201,6 +212,7 @@ export class CodeWikiTreeProvider implements vscode.TreeDataProvider<WikiTreeIte
 			vscode.commands.executeCommand('setContext', 'codewiki.hasWiki', false);
 			vscode.commands.executeCommand('setContext', 'codewiki.hasCodeWiki', false);
 			vscode.commands.executeCommand('setContext', 'codewiki.hasDeepWiki', false);
+			vscode.commands.executeCommand('setContext', 'codewiki.hasQoderWiki', false);
 			vscode.commands.executeCommand('setContext', 'codewiki.hasBothWikis', false);
 		}
 	}
@@ -225,6 +237,10 @@ export class CodeWikiTreeProvider implements vscode.TreeDataProvider<WikiTreeIte
 			} else if (this.selectedWikiType === WikiType.DeepWiki) {
 				this.deepwikiStructure = this.loadDeepWikiStructure();
 				this.moduleTree = undefined;
+			} else if (this.selectedWikiType === WikiType.QoderWiki) {
+				// QoderWiki uses the filesystem scanner directly - no structure files
+				this.moduleTree = undefined;
+				this.deepwikiStructure = undefined;
 			}
 		} else {
 			this.moduleTree = undefined;
@@ -256,6 +272,12 @@ export class CodeWikiTreeProvider implements vscode.TreeDataProvider<WikiTreeIte
 			const items: WikiTreeItem[] = [];
 			
 			// CodeWiki: Add overview.md as the first item (home page)
+			// QoderWiki: skip wrapper dirs (e.g. repowiki/en/content/) and scan real content root
+			if (this.selectedWikiType === WikiType.QoderWiki) {
+				const contentRoot = this.resolveQoderContentRoot(this.wikiPath);
+				return this.scanFileSystem(contentRoot);
+			}
+			
 			if (this.selectedWikiType === WikiType.CodeWiki) {
 				const overviewPath = path.join(this.wikiPath, 'overview.md');
 				if (fs.existsSync(overviewPath)) {
@@ -299,6 +321,11 @@ export class CodeWikiTreeProvider implements vscode.TreeDataProvider<WikiTreeIte
 		if (element.moduleKey && this.moduleTree) {
 			const childItems = this.getModuleChildren(element.moduleKey);
 			return childItems;
+		}
+
+		// For QoderWiki (and filesystem-scanned) directory nodes, scan the subdirectory
+		if (element.isDirectory && element.resourcePath) {
+			return this.scanFileSystem(element.resourcePath);
 		}
 
 		// Fallback: shouldn't reach here if using module tree or deepwiki structure
@@ -365,6 +392,29 @@ export class CodeWikiTreeProvider implements vscode.TreeDataProvider<WikiTreeIte
 		return [];
 	}
 
+	private resolveQoderContentRoot(dir: string): string {
+		// Walk down skipping intermediate wrapper directories that contain only
+		// a single subdirectory and no markdown files, so we land on the real
+		// content folder (e.g. .qoder/repowiki/en/content -> show content directly).
+		let current = dir;
+		for (let depth = 0; depth < 10; depth++) {
+			let entries: fs.Dirent[];
+			try {
+				entries = fs.readdirSync(current, { withFileTypes: true });
+			} catch {
+				break;
+			}
+			const dirs = entries.filter(e => e.isDirectory());
+			const mdFiles = entries.filter(e => !e.isDirectory() && e.name.endsWith('.md'));
+			// Stop when there are markdown files, multiple subdirs, or no subdirs at all
+			if (mdFiles.length > 0 || dirs.length !== 1) {
+				break;
+			}
+			current = path.join(current, dirs[0].name);
+		}
+		return current;
+	}
+
 	private async scanFileSystem(targetPath: string): Promise<WikiTreeItem[]> {
 		try {
 			const items = await fs.promises.readdir(targetPath, { withFileTypes: true });
@@ -388,6 +438,13 @@ export class CodeWikiTreeProvider implements vscode.TreeDataProvider<WikiTreeIte
 					continue;
 				}
 
+				// Skip a .md file whose name matches the parent directory name
+				// (it is the folder's overview page; rendered when clicking the folder)
+				const parentDirName = path.basename(targetPath);
+				if (!isDirectory && item.name === parentDirName + '.md') {
+					continue;
+				}
+
 				// Skip temp directory
 				if (isDirectory && item.name === 'temp') {
 					continue;
@@ -397,6 +454,15 @@ export class CodeWikiTreeProvider implements vscode.TreeDataProvider<WikiTreeIte
 					? vscode.TreeItemCollapsibleState.Collapsed
 					: vscode.TreeItemCollapsibleState.None;
 
+				// For directories, check if there's a same-named .md file inside (e.g. "API Reference/API Reference.md")
+				let pagePath: string | undefined;
+				if (isDirectory) {
+					const candidate = path.join(fullPath, item.name + '.md');
+					if (fs.existsSync(candidate)) {
+						pagePath = candidate;
+					}
+				}
+
 				treeItems.push(new WikiTreeItem(
 					item.name,
 					collapsibleState,
@@ -404,7 +470,10 @@ export class CodeWikiTreeProvider implements vscode.TreeDataProvider<WikiTreeIte
 					isDirectory,
 					false,
 					undefined,
-					this.selectedWikiType
+					this.selectedWikiType,
+					undefined,
+					undefined,
+					pagePath
 				));
 			}
 

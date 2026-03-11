@@ -73,7 +73,7 @@
 			{
 				"view": "codewiki",
 				"when": "codewiki.hasBothWikis && !codewiki.hasWiki",
-				"contents": "Both CodeWiki and DeepWiki are available.\n\nSelect a wiki type to view:\n\n[$(file-code) View CodeWiki](command:codewiki.viewCodeWiki)\n[$(sparkle) View DeepWiki](command:codewiki.viewDeepWiki)"
+				"contents": "Multiple wiki types are available.\n\nSelect a wiki type to view:\n\n[$(file-code) View CodeWiki](command:codewiki.viewCodeWiki)\n[$(sparkle) View DeepWiki](command:codewiki.viewDeepWiki)\n[$(book) View QoderWiki](command:codewiki.viewQoderWiki)"
 			}
 		],
 		"commands": [
@@ -111,6 +111,12 @@
 				"command": "codewiki.viewDeepWiki",
 				"title": "View DeepWiki",
 				"icon": "$(sparkle)",
+				"category": "Repo Wiki"
+			},
+			{
+				"command": "codewiki.viewQoderWiki",
+				"title": "View QoderWiki",
+				"icon": "$(book)",
 				"category": "Repo Wiki"
 			},
 			{
@@ -188,7 +194,7 @@
 			"editor/context": [
 				{
 					"submenu": "codewiki.editorContextMenu",
-					"when": "codewiki.hasCodeWiki || codewiki.hasDeepWiki",
+					"when": "codewiki.hasCodeWiki || codewiki.hasDeepWiki || codewiki.hasQoderWiki",
 					"group": "z_repowiki"
 				}
 			],

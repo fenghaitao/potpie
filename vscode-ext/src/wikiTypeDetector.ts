@@ -6,7 +6,8 @@ import * as path from 'path';
  */
 export enum WikiType {
 	CodeWiki = 'codewiki',
-	DeepWiki = 'deepwiki'
+	DeepWiki = 'deepwiki',
+	QoderWiki = 'qoder'
 }
 
 /**
@@ -15,8 +16,10 @@ export enum WikiType {
 export interface WikiDetectionResult {
 	hasCodeWiki: boolean;
 	hasDeepWiki: boolean;
+	hasQoderWiki: boolean;
 	codeWikiPath?: string;
 	deepWikiPath?: string;
+	qoderWikiPath?: string;
 }
 
 /**
@@ -31,15 +34,19 @@ export class WikiTypeDetector {
 	public static detect(workspaceRoot: string): WikiDetectionResult {
 		const codeWikiPath = path.join(workspaceRoot, '.codewiki');
 		const deepWikiPath = path.join(workspaceRoot, '.deepwiki');
+		const qoderWikiPath = path.join(workspaceRoot, '.qoder');
 
 		const hasCodeWiki = fs.existsSync(codeWikiPath);
 		const hasDeepWiki = fs.existsSync(deepWikiPath);
+		const hasQoderWiki = fs.existsSync(qoderWikiPath);
 
 		return {
 			hasCodeWiki,
 			hasDeepWiki,
+			hasQoderWiki,
 			codeWikiPath: hasCodeWiki ? codeWikiPath : undefined,
-			deepWikiPath: hasDeepWiki ? deepWikiPath : undefined
+			deepWikiPath: hasDeepWiki ? deepWikiPath : undefined,
+			qoderWikiPath: hasQoderWiki ? qoderWikiPath : undefined
 		};
 	}
 
@@ -50,6 +57,7 @@ export class WikiTypeDetector {
 		let count = 0;
 		if (detection.hasCodeWiki) count++;
 		if (detection.hasDeepWiki) count++;
+		if (detection.hasQoderWiki) count++;
 		return count;
 	}
 
@@ -57,7 +65,7 @@ export class WikiTypeDetector {
 	 * Check if any wiki exists
 	 */
 	public static hasAnyWiki(detection: WikiDetectionResult): boolean {
-		return detection.hasCodeWiki || detection.hasDeepWiki;
+		return detection.hasCodeWiki || detection.hasDeepWiki || detection.hasQoderWiki;
 	}
 
 	/**
@@ -76,6 +84,8 @@ export class WikiTypeDetector {
 				return 'CodeWiki';
 			case WikiType.DeepWiki:
 				return 'DeepWiki';
+			case WikiType.QoderWiki:
+				return 'QoderWiki';
 		}
 	}
 
@@ -88,6 +98,8 @@ export class WikiTypeDetector {
 				return 'Standard repository documentation with module structure';
 			case WikiType.DeepWiki:
 				return 'Deep analysis with enhanced AI-powered insights';
+			case WikiType.QoderWiki:
+				return 'QoderWiki pages from .qoder directory';
 		}
 	}
 }

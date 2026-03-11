@@ -251,6 +251,12 @@ export function activate(context: vscode.ExtensionContext) {
 	);
 
 	context.subscriptions.push(
+		vscode.commands.registerCommand('codewiki.viewQoderWiki', () => {
+			treeProvider.setSelectedWikiType(WikiType.QoderWiki);
+		})
+	);
+
+	context.subscriptions.push(
 		vscode.commands.registerCommand('codewiki.evaluateWiki', async () => {
 			console.log('[CodeWiki] Evaluate Wiki command triggered');
 			if (!vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) {
@@ -295,6 +301,14 @@ export function activate(context: vscode.ExtensionContext) {
 					label: '$(sparkle) DeepWiki',
 					description: WikiTypeDetector.getDescription(WikiType.DeepWiki),
 					wikiType: WikiType.DeepWiki
+				});
+			}
+
+			if (detection.hasQoderWiki) {
+				options.push({
+					label: '$(book) QoderWiki',
+					description: WikiTypeDetector.getDescription(WikiType.QoderWiki),
+					wikiType: WikiType.QoderWiki
 				});
 			}
 
@@ -570,7 +584,8 @@ ${errorData.code}
 				// Determine wiki type based on what exists
 				const hasCodeWiki = fs.existsSync(path.join(currentWorkspace.uri.fsPath, '.codewiki'));
 				const hasDeepWiki = fs.existsSync(path.join(currentWorkspace.uri.fsPath, '.deepwiki'));
-				const wikiType = hasDeepWiki ? '.deepwiki' : '.codewiki';
+				const hasQoderWiki = fs.existsSync(path.join(currentWorkspace.uri.fsPath, '.qoder'));
+				const wikiType = hasDeepWiki ? '.deepwiki' : (hasQoderWiki ? '.qoder' : '.codewiki');
 				const wikiDir = path.join(currentWorkspace.uri.fsPath, wikiType);
 				
 				searchOutputChannel.appendLine(`\nAttempting to load ${results.length} document(s)...`);
@@ -590,7 +605,7 @@ ${errorData.code}
 					// Try to find it in the wiki directory structure
 					let fullPath: string;
 					
-					if (result.filePath.startsWith('.codewiki/') || result.filePath.startsWith('.deepwiki/')) {
+					if (result.filePath.startsWith('.codewiki/') || result.filePath.startsWith('.deepwiki/') || result.filePath.startsWith('.qoder/')) {
 						// Already has wiki prefix
 						fullPath = path.join(currentWorkspace.uri.fsPath, result.filePath);
 						searchOutputChannel.appendLine(`  -> Using prefixed path: ${fullPath}`);
