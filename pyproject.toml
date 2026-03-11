@@ -43,6 +43,7 @@ dependencies = [
     "postgres>=4.0",
     "posthog>=6.9.0",
     "protobuf>=6.33.5",
+    "grpcio-tools>=1.62.0",
     "psycopg-binary>=3.2.12",
     "pydantic-ai>=1.56.0",
     "pydantic-ai-todo>=0.1.6",
@@ -109,7 +110,7 @@ skips = ["B101", "B601"]                # Skip assert_used and shell injection w
 exclude = ["tests", "app/alembic"]
 
 [tool.pytest.ini_options]
-testpaths = ["app/modules/auth/tests"]
+testpaths = ["app/modules/auth/tests", "app/modules/parsing"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]

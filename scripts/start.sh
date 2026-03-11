@@ -43,6 +43,16 @@ fi
 echo "Installing CLI dependencies..."
 uv pip install --group cli
 
+# Generate scip_pb2.py if proto file exists (optional SCIP integration)
+if [[ -f "scip/scip.proto" ]]; then
+    echo "Generating scip_pb2.py..."
+    if bash scip/generate_pb2.sh 2>/dev/null; then
+        echo "✓ scip_pb2.py generated successfully"
+    else
+        echo "Note: scip_pb2.py generation skipped (SCIP integration will be unavailable)"
+    fi
+fi
+
 # Install gVisor (optional, for command isolation)
 echo "Installing gVisor (optional, for command isolation)..."
 if python scripts/install_gvisor.py 2>/dev/null; then

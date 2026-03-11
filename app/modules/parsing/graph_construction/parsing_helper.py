@@ -107,9 +107,10 @@ class ParseHelper:
                     status_code=400,
                     detail="Local repository does not exist on the given path",
                 )
-            repo = Repo(repo_details.repo_path)
+            repo = Repo(repo_details.repo_path, search_parent_directories=True)
             logger.info(
-                f"ParsingHelper: clone_or_copy_repository created local Repo object for path: {repo_details.repo_path}"
+                f"ParsingHelper: clone_or_copy_repository created local Repo object for path: {repo_details.repo_path} "
+                f"(git_dir: {repo.git_dir}, working_tree_dir: {repo.working_tree_dir})"
             )
         else:
             # When RepoManager is enabled, it becomes the primary source of truth
@@ -915,7 +916,7 @@ class ParseHelper:
         Raises:
             HTTPException: Only if all recovery strategies fail
         """
-        
+
 
         # Support both bare repo (.bare) and regular repo (.git) structures
         repo_base_path = self.repo_manager.repos_base_path / repo_name
@@ -1071,14 +1072,26 @@ class ParseHelper:
                 f"ParsingHelper: Detected RepoManager-cached remote repository {full_name}"
             )
         elif isinstance(repo, Repo):
-            # Local repository - use full path from Repo object
-            repo_path = repo.working_tree_dir
+            # Local repository — prefer the user-supplied path (may be a
+            # subdirectory of the git working tree) so that parsing is
+            # scoped correctly.
+            user_repo_path = (
+                getattr(repo_details, "repo_path", None)
+                or getattr(repo_details, "working_tree_dir", None)
+            )
+            repo_path = user_repo_path if user_repo_path else repo.working_tree_dir
             full_name = repo_path.split("/")[
                 -1
             ]  # Extract just the directory name for display
-            logger.info(
-                f"ParsingHelper: Detected local repository at {repo_path} with name {full_name}"
-            )
+            if repo_path != repo.working_tree_dir:
+                logger.info(
+                    f"ParsingHelper: Using subdirectory {repo_path} within git repo "
+                    f"{repo.working_tree_dir} (name: {full_name})"
+                )
+            else:
+                logger.info(
+                    f"ParsingHelper: Detected local repository at {repo_path} with name {full_name}"
+                )
         elif isinstance(repo_details, Repo):
             # Alternative: repo_details is the Repo object (non-dev mode)
             repo_path = repo_details.working_tree_dir

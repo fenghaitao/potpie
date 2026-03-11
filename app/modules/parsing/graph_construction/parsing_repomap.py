@@ -1,5 +1,7 @@
 import math
 import os
+import subprocess
+import tempfile
 import warnings
 from collections import Counter, defaultdict, namedtuple
 from pathlib import Path
@@ -21,9 +23,50 @@ from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
+# Optional SCIP integration for precise Python symbol resolution
+try:
+    import sys as _sys
+    _SCIP_DIR = str(Path(__file__).resolve().parents[4] / "scip")
+    if _SCIP_DIR not in _sys.path:
+        _sys.path.insert(0, _SCIP_DIR)
+    from read_scip import (  # noqa: E402
+        load_index as scip_load_index,
+        build_document_records as scip_build_document_records,
+        symbol_kind as scip_symbol_kind,
+        short_name as scip_short_name,
+    )
+    _SCIP_AVAILABLE = True
+except (
+    ImportError,
+    ModuleNotFoundError,
+    RuntimeError,
+    FileNotFoundError,
+    OSError,
+    IOError,
+    Exception,  # catch-all for any other unexpected import-time errors
+) as _exc:
+    logger.info("SCIP integration unavailable (missing module): %s", _exc)
+    _SCIP_AVAILABLE = False
+
 # tree_sitter is throwing a FutureWarning
 warnings.simplefilter("ignore", category=FutureWarning)
-Tag = namedtuple("Tag", "rel_fname fname line end_line name kind type".split())
+Tag = namedtuple("Tag", "rel_fname fname line end_line name ident kind type text".split())
+
+# SCIP symbol-kind → Tag type mapping (used by _scip_tags_from_document)
+_SCIP_KIND_TO_TAG_TYPE = {
+    "method": "method",
+    "class": "class",
+    "variable": "variable",
+    "module": "module",
+}
+
+# Tag type → node-type string used by find_node_by_range for text extraction
+_TAG_TYPE_TO_NODE_TYPE = {
+    "method": "FUNCTION",
+    "function": "FUNCTION",
+    "class": "CLASS",
+    "interface": "INTERFACE",
+}
 
 
 class RepoMap:
@@ -54,6 +97,9 @@ class RepoMap:
 
         self.repo_content_prefix = repo_content_prefix
         self.parse_helper = ParseHelper(next(get_db()))
+        self.scip_docs = {}  # populated by _run_scip_indexing for Python files
+        self._scip_repo_dir = None   # repo_dir that self.scip_docs corresponds to
+        self._scip_repo_mtime = None # newest .py mtime when index was built
 
     def get_repo_map(
         self, chat_files, other_files, mentioned_fnames=None, mentioned_idents=None
@@ -137,9 +183,85 @@ class RepoMap:
         if file_mtime is None:
             return []
 
+        if _SCIP_AVAILABLE:
+            # Use SCIP-derived tags for Python files when available
+            if fname.endswith(".py") and self.scip_docs:
+                if rel_fname not in self.scip_docs:
+                    logger.warning(f"SCIP document record missing for {rel_fname}")
+                    return []
+                return list(self._scip_tags_from_document(
+                    self.scip_docs[rel_fname], fname, rel_fname
+                ))
+
         data = list(self.get_tags_raw(fname, rel_fname))
 
         return data
+
+    def _scip_tags_from_document(self, doc_record, fname, rel_fname):
+        """Yield Tag namedtuples from a SCIP DocumentRecord.
+
+        Maps SCIP fully-qualified symbols to the same Tag format that
+        tree-sitter get_tags_raw produces.  ``tag.name`` stays as the
+        short identifier (for display / node naming), while ``tag.ident``
+        carries the full SCIP symbol so that def-ref matching in
+        create_graph is compiler-accurate with zero false positives.
+
+        ``tag.line`` and ``tag.end_line`` come from the SCIP occurrence's
+        ``range`` (start) and ``enclosing_range`` (end).  Node text is
+        read directly from ``file_lines[line:end_line+1]``.
+        """
+        # Read file for text extraction
+        code = self.io.read_text(fname) or ""
+        file_lines = code.splitlines()
+
+        for defn in doc_record.definitions:
+            kind = scip_symbol_kind(defn.symbol)
+            if kind == "parameter":
+                continue
+            tag_type = _SCIP_KIND_TO_TAG_TYPE.get(kind, "unknown")
+
+            # Resolve full source text for this definition
+            node_text = ""
+            end_line = defn.end_line if defn.end_line >= 0 else defn.line
+
+            if end_line >= defn.line and defn.line >= 0:
+                # enclosing_range gave us a multi-line extent — slice directly
+                node_text = "\n".join(file_lines[defn.line : end_line + 1])
+            else:
+                logger.error(
+                    "SCIP definition missing multi-line enclosing_range: "
+                    "symbol=%s line=%d end_line=%d file=%s",
+                    defn.symbol, defn.line, end_line, rel_fname,
+                )
+
+            yield Tag(
+                rel_fname=rel_fname,
+                fname=fname,
+                name=scip_short_name(defn.symbol),
+                ident=defn.symbol,
+                kind="def",
+                line=defn.line,
+                end_line=end_line,
+                type=tag_type,
+                text=node_text,
+            )
+
+        for ref in doc_record.references:
+            kind = scip_symbol_kind(ref.symbol)
+            if kind == "parameter":
+                continue
+            tag_type = _SCIP_KIND_TO_TAG_TYPE.get(kind, "unknown")
+            yield Tag(
+                rel_fname=rel_fname,
+                fname=fname,
+                name=scip_short_name(ref.symbol),
+                ident=ref.symbol,
+                kind="ref",
+                line=ref.line,
+                end_line=ref.end_line if ref.end_line >= 0 else ref.line,
+                type=tag_type,
+                text="",
+            )
 
     def get_tags_raw(self, fname, rel_fname):
         lang = filename_to_lang(fname)
@@ -158,6 +280,7 @@ class RepoMap:
         if not code:
             return
         tree = parser.parse(bytes(code, "utf-8"))
+        file_lines = code.splitlines()
 
         # Run the tags queries
         try:
@@ -204,14 +327,33 @@ class RepoMap:
                     if object_node:
                         node_text = f"{object_node.text.decode('utf-8')}.{node_text}"
 
+            # Extract full source text for definition tags
+            text = ""
+            tag_end_line = node.end_point[0]
+            if kind == "def":
+                ts_node_type = _TAG_TYPE_TO_NODE_TYPE.get(type)
+                if ts_node_type:
+                    ts_node = RepoMap.find_node_by_range(
+                        tree.root_node, node.start_point[0], ts_node_type
+                    )
+                    actual_end = (
+                        ts_node.end_point[0] if ts_node else node.start_point[0]
+                    )
+                    tag_end_line = actual_end
+                    text = "\n".join(
+                        file_lines[node.start_point[0] : actual_end + 1]
+                    )
+
             result = Tag(
                 rel_fname=rel_fname,
                 fname=fname,
                 name=node_text,
+                ident=node_text,
                 kind=kind,
                 line=node.start_point[0],
-                end_line=node.end_point[0],
+                end_line=tag_end_line,
                 type=type,
+                text=text,
             )
 
             yield result
@@ -234,10 +376,12 @@ class RepoMap:
                 rel_fname=rel_fname,
                 fname=fname,
                 name=token,
+                ident=token,
                 kind="ref",
                 line=-1,
                 end_line=-1,
                 type="unknown",
+                text="",
             )
 
     @staticmethod
@@ -257,6 +401,7 @@ class RepoMap:
         if not code:
             return
         tree = parser.parse(bytes(code, "utf-8"))
+        file_lines = code.splitlines()
 
         # Run the tags queries
         try:
@@ -289,14 +434,35 @@ class RepoMap:
 
             saw.add(kind)
 
+            node_text = node.text.decode("utf-8")
+
+            # Extract full source text for definition tags
+            text = ""
+            tag_end_line = node.end_point[0]
+            if kind == "def":
+                ts_node_type = _TAG_TYPE_TO_NODE_TYPE.get(type)
+                if ts_node_type:
+                    ts_node = RepoMap.find_node_by_range(
+                        tree.root_node, node.start_point[0], ts_node_type
+                    )
+                    actual_end = (
+                        ts_node.end_point[0] if ts_node else node.start_point[0]
+                    )
+                    tag_end_line = actual_end
+                    text = "\n".join(
+                        file_lines[node.start_point[0] : actual_end + 1]
+                    )
+
             result = Tag(
                 rel_fname=fname,
                 fname=fname,
-                name=node.text.decode("utf-8"),
+                name=node_text,
+                ident=node_text,
                 kind=kind,
                 line=node.start_point[0],
-                end_line=node.end_point[0],
+                end_line=tag_end_line,
                 type=type,
+                text=text,
             )
 
             yield result
@@ -323,10 +489,12 @@ class RepoMap:
                 rel_fname=fname,
                 fname=fname,
                 name=token,
+                ident=token,
                 kind="ref",
                 line=-1,
                 end_line=-1,
                 type="unknown",
+                text="",
             )
 
     def get_ranked_tags(
@@ -380,12 +548,12 @@ class RepoMap:
 
             for tag in tags:
                 if tag.kind == "def":
-                    defines[tag.name].add(rel_fname)
-                    key = (rel_fname, tag.name)
+                    defines[tag.ident].add(rel_fname)
+                    key = (rel_fname, tag.ident)
                     definitions[key].add(tag)
 
                 if tag.kind == "ref":
-                    references[tag.name].append(rel_fname)
+                    references[tag.ident].append(rel_fname)
 
         ##
         # dump(defines)
@@ -395,13 +563,27 @@ class RepoMap:
         if not references:
             references = dict((k, list(v)) for k, v in defines.items())
 
+        # Build a reverse lookup so that short mentioned_idents (e.g.
+        # "run") can boost full SCIP symbol keys that contain them.
+        # For tree-sitter tags ident == name, so the lookup is identity.
+        ident_to_short: dict[str, str] = {}
+        for ident_key in set(defines.keys()) | set(references.keys()):
+            # For SCIP symbols the short name is tag.name, but we only
+            # have the ident key here.  We can derive the short form by
+            # checking whether any mentioned_ident is a substring.
+            for mi in mentioned_idents:
+                if mi in ident_key:
+                    ident_to_short[ident_key] = mi
+                    break
+
         idents = set(defines.keys()).intersection(set(references.keys()))
 
         G = nx.MultiDiGraph()
 
         for ident in idents:
             definers = defines[ident]
-            if ident in mentioned_idents:
+            short = ident_to_short.get(ident)
+            if short and short in mentioned_idents:
                 mul = 10
             elif ident.startswith("_"):
                 mul = 0.1
@@ -608,6 +790,109 @@ class RepoMap:
 
         return False
 
+    @staticmethod
+    def _newest_py_mtime(repo_dir: str) -> float:
+        """Return the newest mtime among .py files under repo_dir (0 if none)."""
+        newest = 0.0
+        for root, _dirs, files in os.walk(repo_dir):
+            for f in files:
+                if f.endswith(".py"):
+                    try:
+                        mt = os.path.getmtime(os.path.join(root, f))
+                        if mt > newest:
+                            newest = mt
+                    except OSError:
+                        pass
+        return newest
+
+    def _run_scip_indexing(self, repo_dir):
+        """Run scip-python on repo_dir and populate self.scip_docs.
+
+        Results are cached: if repo_dir and the newest .py mtime are
+        unchanged since the last call the subprocess is skipped.
+
+        If scip-python is not installed or indexing fails, self.scip_docs
+        remains empty and get_tags falls back to tree-sitter.
+        """
+        if not _SCIP_AVAILABLE:
+            logger.info("SCIP bindings not available, skipping Python SCIP indexing")
+            return
+        logger.info("Running SCIP indexing for Python files in repo_dir: %s", repo_dir)
+        # ── cache check ──────────────────────────────────────────────
+        current_mtime = self._newest_py_mtime(repo_dir)
+        if (
+            self._scip_repo_dir == repo_dir
+            and self._scip_repo_mtime == current_mtime
+            and self.scip_docs
+        ):
+            logger.debug("SCIP index cache hit — reusing previous results")
+            return
+
+        scip_output = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".scip", delete=False) as tmp:
+                scip_output = tmp.name
+
+            project_name = os.path.basename(repo_dir) or "project"
+            logger.info(f"Running scip-python index on {repo_dir}, output to {scip_output}")
+            result = subprocess.run(
+                [
+                    "scip-python", "index",
+                    "--cwd", repo_dir,
+                    "--project-name", project_name,
+                    "--output", scip_output,
+                ],
+                cwd=repo_dir,
+                capture_output=True,
+                text=True,
+                # Keep timeout conservative; consider making configurable
+                # for very large repos via an env var or constructor param.
+                timeout=120,
+            )
+
+            if result.returncode == 0 and os.path.exists(scip_output):
+                index = scip_load_index(scip_output)
+                self.scip_docs = scip_build_document_records(index)
+                self._scip_repo_dir = repo_dir
+                self._scip_repo_mtime = current_mtime
+                logger.info(
+                    f"SCIP indexing completed: {len(self.scip_docs)} Python files indexed"
+                )
+                # scip-python may emit harmless warnings on stderr even on
+                # success (e.g. unresolved third-party imports); log at
+                # DEBUG to avoid noisy output.
+                if result.stderr:
+                    logger.debug(f"scip-python stderr: {result.stderr[:500]}")
+            else:
+                logger.warning(
+                    f"scip-python failed (rc={result.returncode}): "
+                    f"{result.stderr[:500]}"
+                )
+                self.scip_docs = {}
+
+        except FileNotFoundError:
+            logger.warning(
+                "scip-python not found on PATH, "
+                "falling back to tree-sitter for Python files"
+            )
+            self.scip_docs = {}
+        except subprocess.TimeoutExpired:
+            logger.warning(
+                "scip-python timed out after 120s — repo may be too large. "
+                "Falling back to tree-sitter for Python files"
+            )
+            self.scip_docs = {}
+        except Exception as e:
+            logger.warning(f"SCIP indexing failed: {e}, falling back to tree-sitter")
+            self.scip_docs = {}
+        finally:
+            # Clean up temp file in all cases
+            if scip_output and os.path.exists(scip_output):
+                try:
+                    os.unlink(scip_output)
+                except OSError:
+                    pass
+
     def create_graph(self, repo_dir):
         G = nx.MultiDiGraph()
         defines = defaultdict(set)
@@ -617,6 +902,37 @@ class RepoMap:
         # Load combined ignore patterns (.gitignore + .potpieignore)
         from app.modules.code_provider.ignore_spec import load_ignore_spec
         _ignore_spec = load_ignore_spec(repo_dir)
+
+        # Load .potpieallowedlang allowed-suffix whitelist
+        _allowed_suffixes = None
+        _potpieallowedlang_path = os.path.join(repo_dir, ".potpieallowedlang")
+        if os.path.exists(_potpieallowedlang_path):
+            try:
+                with open(_potpieallowedlang_path, "r", encoding="utf-8") as _f:
+                    # Each line is a glob like "*.py", "*.dml"; strip to just the suffix
+                    _allowed_suffixes = set()
+                    for _line in _f.read().splitlines():
+                        _line = _line.strip()
+                        if _line and not _line.startswith("#"):
+                            # Accept both "*.py" and ".py" forms
+                            suffix = _line.lstrip("*")
+                            if suffix:
+                                _allowed_suffixes.add(suffix)
+                    if _allowed_suffixes:
+                        logger.info(
+                            "Loaded .potpieallowedlang whitelist: %s",
+                            _allowed_suffixes,
+                        )
+                    else:
+                        _allowed_suffixes = None
+            except Exception:
+                pass
+
+        # Attempt SCIP indexing before the main walk; _run_scip_indexing
+        # no-ops quickly if scip-python is unavailable or the repo has no
+        # Python files (the index will simply contain zero documents).
+        if _allowed_suffixes and ".py" in _allowed_suffixes:
+            self._run_scip_indexing(repo_dir)
 
         for root, dirs, files in os.walk(repo_dir):
             # Get relative path from repo_dir to avoid skipping paths that contain .repos_local etc.
@@ -664,6 +980,12 @@ class RepoMap:
                 ]
 
             for file in files:
+                # Skip files whose suffix is not in the allowed-language whitelist
+                if _allowed_suffixes:
+                    file_suffix = os.path.splitext(file)[1]  # e.g. ".py"
+                    if file_suffix not in _allowed_suffixes:
+                        continue
+
                 file_path = os.path.join(root, file)
                 file_rel_path = os.path.relpath(file_path, repo_dir)
 
@@ -674,117 +996,101 @@ class RepoMap:
                 if not self.parse_helper.is_text_file(file_path):
                     continue
 
-                logger.info(f"\nProcessing file: {file_rel_path}")
+                tags = self.get_tags(file_path, file_rel_path)
+                if tags:
+                    logger.info(f"\nProcessing file: {file_rel_path}")
 
-                # Add file node
-                file_node_name = file_rel_path
-                file_text = self.io.read_text(file_path) or ""
-                file_lines = file_text.splitlines()
-                if not G.has_node(file_node_name):
-                    G.add_node(
-                        file_node_name,
-                        file=file_rel_path,
-                        type="FILE",
-                        text=file_text,
-                        line=0,
-                        end_line=0,
-                        name=file_rel_path.split("/")[-1],
-                    )
-
-                # Pre-parse the file with tree-sitter so we can look up full node extents
-                _ts_root = None
-                _ts_lang = filename_to_lang(file_path)
-                if _ts_lang:
-                    try:
-                        _ts_parser = get_parser(_ts_lang)
-                        _ts_root = _ts_parser.parse(bytes(file_text, "utf-8")).root_node
-                    except Exception:
-                        _ts_root = None
-
-                current_class = None
-                current_method = None
-
-                # Process all tags in file
-                for tag in self.get_tags(file_path, file_rel_path):
-                    if tag.kind == "def":
-                        if tag.type == "class":
-                            node_type = "CLASS"
-                            current_class = tag.name
-                            current_method = None
-                        elif tag.type == "interface":
-                            node_type = "INTERFACE"
-                            current_class = tag.name
-                            current_method = None
-                        elif tag.type in ["method", "function"]:
-                            node_type = "FUNCTION"
-                            current_method = tag.name
-                        else:
-                            continue
-
-                        # Create fully qualified node name
-                        if current_class:
-                            node_name = f"{file_rel_path}:{current_class}.{tag.name}"
-                        else:
-                            node_name = f"{file_rel_path}:{tag.name}"
-
-                        # Extract full source text using tree-sitter AST extent when available
-                        if tag.line >= 0:
-                            actual_end_line = tag.line  # fallback: just the name line
-                            if _ts_root is not None:
-                                ts_node = RepoMap.find_node_by_range(
-                                    _ts_root, tag.line, node_type
-                                )
-                                if ts_node is not None:
-                                    actual_end_line = ts_node.end_point[0]
-                            node_text = "\n".join(file_lines[tag.line : actual_end_line + 1])
-                        else:
-                            node_text = ""
-
-                        # Add node
-                        if not G.has_node(node_name):
-                            G.add_node(
-                                node_name,
-                                file=file_rel_path,
-                                line=tag.line,
-                                end_line=tag.end_line,
-                                type=node_type,
-                                name=tag.name,
-                                class_name=current_class,
-                                text=node_text,
-                            )
-
-                            # Add CONTAINS relationship from file
-                            rel_key = (file_node_name, node_name, "CONTAINS")
-                            if rel_key not in seen_relationships:
-                                G.add_edge(
-                                    file_node_name,
-                                    node_name,
-                                    type="CONTAINS",
-                                    ident=tag.name,
-                                )
-                                seen_relationships.add(rel_key)
-
-                        # Record definition
-                        defines[tag.name].add(node_name)
-
-                    elif tag.kind == "ref":
-                        # Handle references
-                        if current_class and current_method:
-                            source = f"{file_rel_path}:{current_class}.{current_method}"
-                        elif current_method:
-                            source = f"{file_rel_path}:{current_method}"
-                        else:
-                            source = file_rel_path
-
-                        references[tag.name].add(
-                            (
-                                source,
-                                tag.line,
-                                tag.end_line,
-                                current_class,
-                                current_method,
-                            )
+                    # Add file node
+                    file_node_name = file_rel_path
+                    file_text = self.io.read_text(file_path) or ""
+                    if not G.has_node(file_node_name):
+                        G.add_node(
+                            file_node_name,
+                            file=file_rel_path,
+                            type="FILE",
+                            text=file_text,
+                            line=0,
+                            end_line=0,
+                            name=file_rel_path.split("/")[-1],
                         )
+
+                    current_class = None
+                    current_method = None
+
+                    # Process all tags in file
+                    for tag in tags:
+                        if tag.kind == "def":
+                            if tag.type == "class":
+                                node_type = "CLASS"
+                                current_class = tag.name
+                                current_method = None
+                            elif tag.type == "interface":
+                                node_type = "INTERFACE"
+                                current_class = tag.name
+                                current_method = None
+                            elif tag.type in ["method", "function"]:
+                                node_type = "FUNCTION"
+                                current_method = tag.name
+                            else:
+                                continue
+
+                            # Create fully qualified node name
+                            if current_class:
+                                node_name = f"{file_rel_path}:{current_class}.{tag.name}"
+                            else:
+                                node_name = f"{file_rel_path}:{tag.name}"
+
+                            # Source text is pre-computed by get_tags_raw /
+                            # _scip_tags_from_document and stored in tag.text
+                            node_text = tag.text
+
+                            # Add node
+                            if not G.has_node(node_name):
+                                G.add_node(
+                                    node_name,
+                                    file=file_rel_path,
+                                    line=tag.line,
+                                    end_line=tag.end_line,
+                                    type=node_type,
+                                    name=tag.name,
+                                    class_name=current_class,
+                                    text=node_text,
+                                )
+
+                                # Add CONTAINS relationship from file
+                                rel_key = (file_node_name, node_name, "CONTAINS")
+                                if rel_key not in seen_relationships:
+                                    G.add_edge(
+                                        file_node_name,
+                                        node_name,
+                                        type="CONTAINS",
+                                        ident=tag.name,
+                                    )
+                                    seen_relationships.add(rel_key)
+
+                            # Record definition — use tag.ident (full SCIP
+                            # symbol for Python, short name for tree-sitter)
+                            # so def→ref matching is compiler-accurate.
+                            defines[tag.ident].add(node_name)
+
+                        elif tag.kind == "ref":
+                            # Handle references
+                            if current_class and current_method:
+                                source = f"{file_rel_path}:{current_class}.{current_method}"
+                            elif current_method:
+                                source = f"{file_rel_path}:{current_method}"
+                            else:
+                                source = file_rel_path
+
+                            references[tag.ident].add(
+                                (
+                                    source,
+                                    tag.line,
+                                    tag.end_line,
+                                    current_class,
+                                    current_method,
+                                )
+                            )
 
         for ident, refs in references.items():
             target_nodes = defines.get(ident, set())
@@ -868,7 +1174,8 @@ class RepoMap:
             return ""
 
         tags = [tag for tag in tags if tag[0] not in chat_rel_fnames]
-        tags = sorted(tags)
+        # Sort by all fields except 'text' (last field) to avoid comparing large text strings
+        tags = sorted(tags, key=lambda t: (t.rel_fname, t.line, t.kind, t.name))
 
         cur_fname = None
         cur_abs_fname = None
