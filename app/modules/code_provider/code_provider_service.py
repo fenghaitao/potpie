@@ -492,7 +492,9 @@ class ProviderWrapper:
             # But first check if we should use local copy instead
             if provider_type == "github":
                 # If repo_manager is available, prefer using wrapped provider for local copies
-                if self.repo_manager:
+                # Skip wrapping for local paths — repo_manager doesn't manage them and
+                # RepoManagerCodeProviderWrapper rejects absolute paths as path traversal
+                if self.repo_manager and not is_local_path:
                     provider = CodeProviderFactory.create_provider_with_fallback(
                         repo_name
                     )

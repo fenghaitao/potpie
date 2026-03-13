@@ -1099,7 +1099,7 @@ class ConversationService:
                     curr_agent_id=str(agent_id),
                     history=capped_history,
                     node_ids=[node.node_id for node in node_ids],
-                    query=query,
+                    query=f"[Codebase: {project_name}, project_id: {project_id}] {query}",
                     project_status=project_status,
                     conversation_id=conversation_id,
                     user_id=user_id,  # Set user_id for tunnel routing
@@ -1147,7 +1147,7 @@ class ConversationService:
                     curr_agent_id=str(agent_id),
                     history=capped_history,
                     node_ids=nodes,
-                    query=query,
+                    query=f"[Codebase: {project_name}, project_id: {project_id}] {query}",
                     project_status=project_status,
                     image_attachments=image_attachments,
                     context_images=context_images,

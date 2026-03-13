@@ -227,7 +227,7 @@ class ProjectResource(BaseResource):
                 ProjectInfo(
                     id=p["id"],
                     repo_name=p["repo_name"],
-                    branch_name="",  # Not returned by list_projects
+                    branch_name=p.get("branch_name", ""),
                     status=ProjectStatus.from_string(p.get("status", "error")),
                 )
                 for p in projects

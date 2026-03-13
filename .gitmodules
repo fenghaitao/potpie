@@ -1,6 +1,6 @@
 [submodule "potpie-ui"]
 	path = potpie-ui
-	url = https://github.com/potpie-ai/potpie-ui
+	url = https://github.com/intel-sandbox/potpie-ui
 
 [submodule "singularity/singularity-compose"]
 	path = singularity/singularity-compose

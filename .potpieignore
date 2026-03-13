@@ -1,6 +1,7 @@
 # Subdirectories to exclude from code indexing
 singularity/
 potpie-ui/
+vscode-ext/
 scip/
 potpie.egg-info/
 
