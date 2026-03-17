@@ -1,0 +1,107 @@
+name: Unit Tests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  unit-tests:
+    name: Run unit tests (Python ${{ matrix.python-version }})
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted]
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.13"]
+
+    # Put these env vars at job scope so every step gets them
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
+      # Keep all caches/temp on the same filesystem as the workspace:
+      UV_CACHE_DIR: ${{ github.workspace }}/.uv-cache
+      XDG_CACHE_HOME: ${{ github.workspace }}/.cache
+      TMPDIR: ${{ github.workspace }}/.tmp
+      # Force copy to avoid hardlink issues across NFS/FS boundaries:
+      UV_LINK_MODE: copy
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # - name: Cache pip dependencies
+      #   uses: actions/cache@v4
+      #   with:
+      #     path: .venv
+      #     key: venv-${{ runner.os }}-py${{ matrix.python-version }}-${{ hashFiles('requirements.txt', 'pyproject.toml') }}
+      #     restore-keys: |
+      #       venv-${{ runner.os }}-py${{ matrix.python-version }}-
+
+      - name: Checkout submodules
+        run: |
+          git submodule update --init --recursive
+
+      - name: Ensure cache dirs exist (same FS as workspace)
+        run: |
+          mkdir -p "$UV_CACHE_DIR" "$XDG_CACHE_HOME" "$TMPDIR"
+
+      # Cache uv cache (now on workspace FS)
+      - name: Cache uv cache
+        uses: actions/cache@v4
+        with:
+          path: .uv-cache
+          key: uv-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('pyproject.toml', 'uv.lock') }}
+          restore-keys: |
+            uv-${{ runner.os }}-${{ matrix.python-version }}-
+
+      # Cache the venv itself
+      - name: Cache venv
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('pyproject.toml', 'uv.lock') }}
+          restore-keys: |
+            venv-${{ runner.os }}-${{ matrix.python-version }}-
+
+      - name: Prepare Python & venv (install dev extra -> pytest)
+        run: |
+          set -euo pipefail
+          uv python install "${UV_PYTHON}"
+
+          # Create venv only if it was not restored
+          test -d .venv || uv venv --python "${UV_PYTHON}" .venv
+          # Sync base deps + dev tools from [dependency-groups]
+          uv sync --group dev
+          # Sanity check
+          uv run python -V
+          uv run pytest --version
+
+
+      - name: Run unit tests
+        # Run only the unit-tests/ folder.
+        # -m "not integration" ensures tests marked @pytest.mark.integration are skipped
+        # (those require live Copilot CLI / DB / Redis credentials).
+        run: |
+          mkdir -p test-results
+          uv run pytest unit-tests/ \
+            -m "not integration" \
+            -v \
+            --tb=short \
+            --junitxml=test-results/junit.xml
+        env:
+          # Provide dummy values for any env-var that might be imported at
+          # module-level but is NOT needed by the mocked unit tests.
+          PYTHONDONTWRITEBYTECODE: "1"
+          ENABLE_MULTI_AGENT: "false"
+
+      # - name: Upload test results
+      #   if: always()
+      #   uses: actions/upload-artifact@v4
+      #   with:
+      #     name: test-results-py${{ matrix.python-version }}
+      #     path: test-results/junit.xml
+      #     retention-days: 14

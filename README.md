@@ -22,8 +22,8 @@
 
 <p align="center">
   <a href="https://docs.potpie.ai"><img src="https://img.shields.io/badge/Docs-Read-blue?logo=readthedocs&logoColor=white" alt="Docs"></a>
-  <a href="https://github.com/potpie-ai/potpie/blob/main/LICENSE"><img src="https://img.shields.io/github/license/potpie-ai/potpie" alt="Apache 2.0"></a>
-  <a href="https://github.com/potpie-ai/potpie"><img src="https://img.shields.io/github/stars/potpie-ai/potpie" alt="GitHub Stars"></a>
+  <a href="https://github.com/intel-sandbox/potpie/blob/main/LICENSE"><img src="https://img.shields.io/github/license/intel-sandbox/potpie" alt="Apache 2.0"></a>
+  <a href="https://github.com/intel-sandbox/potpie"><img src="https://img.shields.io/github/stars/intel-sandbox/potpie" alt="GitHub Stars"></a>
   <a href="https://discord.gg/ryk5CMD5v6"><img src="https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&logoColor=white" alt="Discord"></a>
   <a href="https://marketplace.visualstudio.com/items?itemName=PotpieAI.potpie-vscode-extension"><img src="https://custom-icon-badges.demolab.com/badge/VSCode-Extension-0078d7.svg?logo=vsc&logoColor=white" alt="VSCode Extension"></a>
 </p>
@@ -42,7 +42,7 @@
 1. **Clone the repository**
 
    ```bash
-   git clone --recurse-submodules https://github.com/potpie-ai/potpie.git
+   git clone --recurse-submodules https://github.com/intel-sandbox/potpie.git
    cd potpie
    ```
 
@@ -413,12 +413,29 @@ Read more in our [documentation](https://docs.potpie.ai/open-source/agents/creat
 
 ## Community & Support
 
-- [GitHub Issues](https://github.com/potpie-ai/potpie/issues). Best for: bugs and errors you encounter using Potpie.
+- [GitHub Issues](https://github.com/intel-sandbox/potpie/issues). Best for: bugs and errors you encounter using Potpie.
 - [Discord](https://discord.gg/ryk5CMD5v6). Best for: sharing your projects and hanging out with the community.
 - [Email Support](https://potpie.ai). Best for: problems with your setup or infrastructure.
 
 
-See the [Contributing Guide](https://github.com/potpie-ai/potpie/blob/main/.github/CONTRIBUTING.md) for more details.
+See the [Contributing Guide](https://github.com/intel-sandbox/potpie/blob/main/.github/CONTRIBUTING.md) for more details.
+
+## CI / GitHub Actions
+
+![Unit Tests](https://github.com/intel-sandbox/potpie/actions/workflows/unit-tests.yml/badge.svg)
+
+Unit tests run automatically on pushes to `main` and on pull requests from branches within this repository.
+For security reasons, CI does not run on pull requests from forks created from external repositories. Contributors working from forks should run the test suite locally as shown below before opening or updating a pull request.
+
+```bash
+# Install dev dependencies (including test tools) if you haven't already
+uv sync --group dev
+
+# Run locally with the same tests as CI
+uv run pytest unit-tests/ -m "not integration" -v
+```
+
+See [docs/ci.md](docs/ci.md) for full details and branch-protection setup instructions.
 
 ## License
 
@@ -428,8 +445,8 @@ This project is licensed under the Apache 2.0 License - see the [LICENSE](LICENS
 
 Thanks for spending your time helping build Potpie. Keep rocking 🥂
 
-Want to contribute? Read the [Contributing Guide](https://github.com/potpie-ai/potpie/blob/main/.github/CONTRIBUTING.md) to get started.
+Want to contribute? Read the [Contributing Guide](https://github.com/intel-sandbox/potpie/blob/main/.github/CONTRIBUTING.md) to get started.
 
-<a href="https://github.com/potpie-ai/potpie/graphs/contributors">
-  <img src="https://contributors-img.web.app/image?repo=potpie-ai/potpie" alt="Contributors"/>
+<a href="https://github.com/intel-sandbox/potpie/graphs/contributors">
+  <img src="https://contributors-img.web.app/image?repo=intel-sandbox/potpie" alt="Contributors"/>
 </a>
