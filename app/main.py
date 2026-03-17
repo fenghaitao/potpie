@@ -106,14 +106,21 @@ class MainApp:
         # Split by comma if multiple origins are provided
         origins = [origin.strip() for origin in allowed_origins_env.split(",")]
 
+        # In development mode, allow localhost and 127.0.0.1 on any port via regex
+        allow_origin_regex = None
+        dev_mode = os.getenv("isDevelopmentMode", "").strip().lower()
+        if dev_mode in ("enabled", "true", "1", "yes"):
+            allow_origin_regex = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
+
         self.app.add_middleware(
             CORSMiddleware,
             allow_origins=origins,
+            allow_origin_regex=allow_origin_regex,
             allow_credentials=True,
             allow_methods=["*"],
             allow_headers=["*"],
         )
-        logger.info(f"CORS configured with allowed origins: {origins}")
+        logger.info(f"CORS configured with allowed origins: {origins}, regex: {allow_origin_regex}")
 
     def setup_logging_middleware(self):
         """
