@@ -53,6 +53,8 @@ class DelegationManager:
         self._delegation_cache_key_map: Dict[str, str] = {}
         # Track active streaming tasks by cache_key to detect if they're running
         self._active_streaming_tasks: Dict[str, asyncio.Task] = {}
+        # Accumulated retrieval context chunks from all sub-agent runs
+        self._retrieval_context: List[str] = []
 
     def create_delegation_function(self, agent_type: AgentType) -> Callable:
         """Create a delegation function for a specific agent type.
@@ -435,6 +437,10 @@ class DelegationManager:
                         tool_calls=[],  # Don't stream subagent tool calls to frontend
                         citations=chunk.citations or [],
                     )
+
+                    # Collect retrieval context from sub-agent tool results
+                    if chunk.retrieval_context:
+                        self._retrieval_context.extend(chunk.retrieval_context)
 
                     # Store chunk for later yielding when tool completes
                     collected_chunks.append(text_only_chunk)

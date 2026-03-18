@@ -1,9 +1,11 @@
 """Execution flows for different agent execution modes"""
 
 import traceback
-from typing import AsyncGenerator, Any, Optional
+from typing import AsyncGenerator, Any, List, Optional
 import anyio
+from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.messages import FunctionToolResultEvent
 from pydantic_ai.usage import UsageLimits
 
 from .utils.message_history_utils import (
@@ -92,53 +94,88 @@ class StandardExecutionFlow:
         self.create_supervisor_agent = create_supervisor_agent
         self.history_processor = history_processor
 
+    # Tools whose results constitute retrieval context for faithfulness evaluation
+    _RETRIEVAL_TOOLS = frozenset({
+        "ask_knowledge_graph_queries",
+        "AskKnowledgeGraphQueries",
+        "get_code_from_multiple_node_ids",
+        "GetCodeanddocstringFromMultipleNodeIDs",
+        "get_code_from_probable_node_name",
+        "GetCodeanddocstringFromProbableNodeName",
+        "fetch_file",
+        "fetch_files_batch",
+        "get_code_file_structure",
+        "analyze_code_structure",
+        "GetNodeNeighboursFromNodeID",
+        "GetNodesfromTags",
+    })
+
     async def run(self, ctx: ChatContext) -> ChatAgentResponse:
-        """Standard text-only multi-agent execution"""
+        """Standard text-only multi-agent execution, capturing retrieval context."""
         try:
-            # Prepare message history
             message_history = await prepare_multimodal_message_history(
                 ctx, self.history_processor
             )
-
-            # Create and run supervisor agent
             supervisor_agent = self.create_supervisor_agent(ctx)
-
-            # Validate message history before sending to model (single validation)
             message_history = validate_and_fix_message_history(message_history)
 
-            # Try to initialize MCP servers with timeout handling
-            try:
-                async with supervisor_agent.run_mcp_servers():
-                    resp = await supervisor_agent.run(
+            retrieval_chunks: List[str] = []
+
+            async def _iter_run(ag, mcp: bool) -> str:
+                nonlocal retrieval_chunks
+                async def _run_once():
+                    output = ""
+                    async with ag.iter(
                         user_prompt=ctx.query,
                         message_history=message_history,
-                    )
+                    ) as run:
+                        async for node in run:
+                            if Agent.is_call_tools_node(node):
+                                async with node.stream(run.ctx) as handle_stream:
+                                    async for event in handle_stream:
+                                        if isinstance(event, FunctionToolResultEvent):
+                                            tool_name = event.result.tool_name or ""
+                                            if tool_name in StandardExecutionFlow._RETRIEVAL_TOOLS:
+                                                content = event.result.content
+                                                if not isinstance(content, str):
+                                                    content = str(content)
+                                                content = content.strip()
+                                                _error_prefixes = (
+                                                    "an internal error",
+                                                    "error:",
+                                                    "file not found",
+                                                    "no results",
+                                                    "not found",
+                                                )
+                                                if (
+                                                    content
+                                                    and not content.lower().startswith(_error_prefixes)
+                                                ):
+                                                    retrieval_chunks.append(content)
+                        output = run.result.output if run.result else ""
+                    return output
+                if mcp:
+                    async with ag.run_mcp_servers():
+                        return await _run_once()
+                else:
+                    return await _run_once()
+
+            try:
+                final_output = await _iter_run(supervisor_agent, mcp=True)
             except (TimeoutError, anyio.WouldBlock, Exception) as mcp_error:
                 error_detail = f"{type(mcp_error).__name__}: {str(mcp_error)}"
-                logger.warning(
-                    f"MCP server initialization failed in standard run: {error_detail}",
-                    exc_info=True,
-                )
-                # Check if it's a JSON parsing error
-                if (
-                    "json" in str(mcp_error).lower()
-                    or "parse" in str(mcp_error).lower()
-                ):
-                    logger.error(
-                        f"JSON parsing error during MCP server initialization in standard run - MCP server may be returning malformed or incomplete JSON. Full traceback:\n{traceback.format_exc()}"
-                    )
+                logger.warning(f"MCP server initialization failed in standard run: {error_detail}")
+                if "json" in str(mcp_error).lower() or "parse" in str(mcp_error).lower():
+                    logger.error(f"JSON parsing error during MCP init:\n{traceback.format_exc()}")
                 logger.info("Continuing without MCP servers...")
-
-                # Fallback: run without MCP servers
-                resp = await supervisor_agent.run(
-                    user_prompt=ctx.query,
-                    message_history=message_history,
-                )
+                retrieval_chunks = []
+                final_output = await _iter_run(supervisor_agent, mcp=False)
 
             return ChatAgentResponse(
-                response=resp.output,
+                response=final_output,
                 tool_calls=[],
                 citations=[],
+                retrieval_context=retrieval_chunks,
             )
 
         except Exception as e:

@@ -908,146 +908,99 @@ def _get_last_project() -> Optional[str]:
 # EVAL COMMAND
 # ============================================================================
 
-# Default eval cases covering common codebase Q&A scenarios
-_DEFAULT_EVAL_CASES = [
-    {
-        "name": "architecture overview",
-        "question": "Explain the overall system architecture",
-        "rubrics": [
-            "Answer is specific to the actual codebase, not a generic description",
-            "Answer mentions at least two concrete components, modules, or layers from the project",
-        ],
-    },
-    {
-        "name": "entry point",
-        "question": "What is the main entry point of the application?",
-        "rubrics": [
-            "Answer identifies a specific file or function as the entry point",
-            "Answer does not just say 'I don't know' or ask for clarification",
-        ],
-    },
-    {
-        "name": "data flow",
-        "question": "How does data flow from an API request to the database?",
-        "rubrics": [
-            "Answer describes at least two steps in the data flow",
-            "Answer references actual files, classes, or functions from the codebase",
-        ],
-    },
-    {
-        "name": "key dependencies",
-        "question": "What are the main external libraries or frameworks used?",
-        "rubrics": [
-            "Answer lists at least two real dependencies from the project",
-            "Answer does not hallucinate libraries not present in the project",
-        ],
-    },
-]
-
-
 @cli.command()
-@click.option("--project", "-p", required=True, help="Project ID to evaluate against")
-@click.option("--agent", "-a", default="codebase_qna_agent", show_default=True, help="Agent ID to evaluate")
-@click.option("--cases", "-c", default=None, help="Path to YAML file with custom eval cases")
-@click.option("--concurrency", default=1, show_default=True, help="Max concurrent evaluations")
-def eval(project: str, agent: str, cases: Optional[str], concurrency: int):
+@click.option("--prompt", default="evaluation/qna/prompt.txt", show_default=True,
+              help="Path to prompt file describing the evaluation task")
+@click.option("--skills-dir", default=".kiro/skills", show_default=True,
+              help="Directory containing skill definitions")
+@click.option("--verbose", "-v", is_flag=True, default=False,
+              help="Show debug logging (node types, executor steps, tool args)")
+def eval(prompt: str, skills_dir: str, verbose: bool):
     """
-    🧪 Evaluate agent response quality using LLM-as-a-judge.
+    🧪 Evaluate agent response quality using the potpie-evaluator skill.
 
-    Runs a set of Q&A cases against the agent and scores each answer
-    using pydantic_evals LLMJudge rubrics.
+    Uses pydantic-ai-skills to load the potpie-evaluator skill and runs
+    the evaluation task described in the prompt file.
 
     Examples:
-        potpie-cli eval -p <project-id>
-        potpie-cli eval -p <project-id> --cases my_cases.yaml
-        potpie-cli eval -p <project-id> --agent codebase_qna_agent --concurrency 2
+        potpie-cli eval
+        potpie-cli eval --verbose
+        potpie-cli eval --prompt evaluation/qna/prompt.txt
+        potpie-cli eval --skills-dir .kiro/skills
     """
-    asyncio.run(_eval(project, agent, cases, concurrency))
+    asyncio.run(_eval(prompt, skills_dir, verbose))
 
 
-async def _eval(project_id: str, agent_id: str, cases_path: Optional[str], concurrency: int):
-    """Run evaluation."""
-    import yaml as _yaml
-    from dataclasses import dataclass
-    from pydantic_evals import Case, Dataset
-    from pydantic_evals.evaluators import LLMJudge
-    from pydantic_evals.evaluators.llm_as_a_judge import set_default_judge_model
+async def _eval(prompt_path: str, skills_dir: str, verbose: bool = False):
+    import os
+    from pydantic_ai import Agent, RunContext
+    from pydantic_ai_skills import SkillsToolset
+    from pydantic_ai_skills.directory import SkillsDirectory
     from app.modules.intelligence.provider.litellm_model import LiteLLMModel
 
-    try:
-        runtime = await ctx_obj.get_runtime()
-        project_info = await runtime.projects.get(project_id)
+    def dbg(msg):
+        if verbose:
+            console.print(f"[dim]{msg}[/dim]")
 
-        # Point the LLM judge at the same model we use for everything else
-        import os
-        from app.modules.intelligence.provider.copilot_model import CopilotModel
-        judge_model_name = os.environ.get("CHAT_MODEL", "github_copilot/gpt-4o")
-        if judge_model_name.startswith("copilot_cli/"):
-            # Strip the "copilot_cli/" prefix — CopilotModel takes the bare model name
-            bare_name = judge_model_name.split("/", 1)[1]
-            set_default_judge_model(CopilotModel(bare_name))
-        else:
-            set_default_judge_model(LiteLLMModel(judge_model_name))
-
-        # Load cases
-        if cases_path:
-            with open(cases_path) as f:
-                raw = _yaml.safe_load(f)
-            eval_cases_data = raw.get("cases", raw) if isinstance(raw, dict) else raw
-        else:
-            eval_cases_data = _DEFAULT_EVAL_CASES
-
-        # Build pydantic_evals Dataset
-        @dataclass
-        class EvalInputs:
-            question: str
-
-        cases_list = []
-        for c in eval_cases_data:
-            rubrics = c.get("rubrics", [c.get("rubric", "Answer is helpful and accurate")])
-            cases_list.append(
-                Case(
-                    name=c.get("name", c["question"][:50]),
-                    inputs=EvalInputs(question=c["question"]),
-                    evaluators=tuple(LLMJudge(rubric=r) for r in rubrics),
-                )
-            )
-
-        dataset: Dataset[EvalInputs, str, None] = Dataset(cases=cases_list)
-
-        console.print(f"\n[bold cyan]🧪 Evaluating[/bold cyan] [green]{project_info.repo_name}[/green] "
-                      f"with agent [yellow]{agent_id}[/yellow] — {len(cases_list)} cases\n")
-
-        # Task function: call the agent and return the text response
-        async def task(inputs: EvalInputs) -> str:
-            try:
-                agent_handle = getattr(runtime.agents, agent_id)
-                ctx = ChatContext(
-                    project_id=project_id,
-                    project_name=project_info.repo_name,
-                    curr_agent_id=agent_id,
-                    query=inputs.question,
-                    history=[],
-                    user_id=ctx_obj.default_user_id,
-                )
-                response = await agent_handle.query(ctx)
-                return response.response
-            except Exception as e:
-                return f"ERROR: {e}"
-
-        report = await dataset.evaluate(task, max_concurrency=concurrency, progress=True)
-        report.print(console=console, include_input=True)
-
-        # Summary score
-        averages = report.averages()
-        if averages and averages.assertions is not None:
-            score_pct = averages.assertions * 100
-            color = "green" if score_pct >= 70 else "yellow" if score_pct >= 40 else "red"
-            console.print(f"\n[bold]Overall pass rate: [{color}]{score_pct:.0f}%[/{color}][/bold]")
-
-    except Exception as e:
-        console.print(f"[bold red]Error:[/bold red] {e}")
+    # Read the prompt
+    prompt_file = Path(prompt_path)
+    if not prompt_file.is_absolute():
+        prompt_file = Path(__file__).parent / prompt_file
+    if not prompt_file.exists():
+        console.print(f"[bold red]Error:[/bold red] Prompt file not found: {prompt_path}")
         raise click.Abort()
+    user_prompt = prompt_file.read_text().strip()
+
+    # Resolve any relative file paths in the prompt to absolute, so the skill
+    # script can find them regardless of its working directory
+    repo_root = str(Path(__file__).parent)
+    cases_abs = str(Path(__file__).parent / "evaluation/qna/qna_eval_dml_cases.yaml")
+    user_prompt = user_prompt + (
+        f"\n\nIMPORTANT: run_skill_script takes args as a dict, not a list."
+        f" Use: args={{'cases': '{cases_abs}', 'repo': 'device-modeling-language'}}"
+    )
+
+    # Resolve skills directory relative to repo root
+    skills_path = Path(skills_dir)
+    if not skills_path.is_absolute():
+        skills_path = Path(__file__).parent / skills_path
+
+    # Build model — use LiteLLMModel with the configured CHAT_MODEL
+    model_name = os.environ.get("CHAT_MODEL", "github_copilot/gpt-4o")
+    from pydantic_ai_skills.local import LocalSkillScriptExecutor
+    model = LiteLLMModel(model_name)
+
+    executor = LocalSkillScriptExecutor(timeout=600)
+    skills_dir_obj = SkillsDirectory(path=str(skills_path), script_executor=executor)
+    skills_toolset = SkillsToolset(directories=[skills_dir_obj])
+
+    agent = Agent(
+        model=model,
+        instructions="You are a helpful evaluation assistant.",
+        toolsets=[skills_toolset],
+    )
+
+    @agent.instructions
+    async def add_skills(ctx: RunContext) -> str | None:
+        return await skills_toolset.get_instructions(ctx)
+
+    console.print(f"\n[bold cyan]🧪 Running eval via pydantic-ai-skills[/bold cyan]")
+    console.print(f"[dim]Prompt: {user_prompt}[/dim]\n")
+    dbg("Building agent...")
+
+    async with agent.iter(user_prompt) as agent_run:
+        dbg("Agent started, iterating nodes...")
+        async for node in agent_run:
+            dbg(f"Node: {type(node).__name__}")
+            if Agent.is_call_tools_node(node):
+                for part in node.model_response.parts:
+                    if hasattr(part, "tool_name"):
+                        console.print(f"\n[dim cyan]🔧 {part.tool_name}[/dim cyan]")
+                        if verbose and hasattr(part, "args"):
+                            dbg(f"  args: {part.args}")
+            elif Agent.is_end_node(node):
+                console.print(f"\n[bold green]✅ Result:[/bold green]\n")
+                console.print(Markdown(str(node.data.output)))
 
 
 # ============================================================================

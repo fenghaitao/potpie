@@ -29,6 +29,31 @@ from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
+# Tools that provide retrieval context (knowledge graph, code, files, etc.)
+_RETRIEVAL_TOOLS = frozenset({
+    "ask_knowledge_graph_queries",
+    "AskKnowledgeGraphQueries",
+    "get_code_from_multiple_node_ids",
+    "GetCodeanddocstringFromMultipleNodeIDs",
+    "get_code_from_probable_node_name",
+    "GetCodeanddocstringFromProbableNodeName",
+    "fetch_file",
+    "fetch_files_batch",
+    "get_code_file_structure",
+    "analyze_code_structure",
+    "GetNodeNeighboursFromNodeID",
+    "GetNodesfromTags",
+})
+
+# Prefixes that indicate error-like retrieval results we should not treat as context
+_ERROR_PREFIXES = (
+    "an internal error",
+    "error:",
+    "file not found",
+    "no results",
+    "not found",
+)
+
 # Timeout constants for subagent operations
 # These are generous timeouts to allow complex tasks to complete
 # Event-driven keepalive mechanisms prevent getting stuck even with long timeouts
@@ -876,6 +901,22 @@ class DelegationStreamer:
                                 f"[SUBAGENT] Slow tool execution: {result_tool_name} "
                                 f"took {tool_elapsed:.1f}s"
                             )
+                        # Capture retrieval context from knowledge graph / file tools
+                        if result_tool_name in _RETRIEVAL_TOOLS:
+                            content = event.result.content
+                            if not isinstance(content, str):
+                                content = str(content)
+                            content = content.strip()
+                            if (
+                                content
+                                and not content.lower().startswith(_ERROR_PREFIXES)
+                            ):
+                                yield ChatAgentResponse(
+                                    response="",
+                                    tool_calls=[],
+                                    citations=[],
+                                    retrieval_context=[content],
+                                )
 
             except asyncio.CancelledError:
                 logger.info(f"[SUBAGENT] Node #{node_count}: tool execution cancelled")

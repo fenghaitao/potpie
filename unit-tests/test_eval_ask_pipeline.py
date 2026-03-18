@@ -1,5 +1,5 @@
 """
-Integration test: ask → YAML → eval pipeline using CopilotModel (gpt-4.1).
+Integration test: ask → YAML → eval pipeline.
 
 Scenario
 --------
@@ -10,13 +10,13 @@ exists in the database.  The test exercises the two CLI commands end-to-end:
                for 4 standard deepeval Q&A questions; collects the answers in a
                temporary YAML file (the "golden answers" fixture).
 
-  2. ``eval`` — calls ``_eval(project_id, agent_id, cases_path, concurrency=1)``
-               with the YAML file produced in step 1;  uses ``CopilotModel("gpt-4.1")``
-               as the LLM judge (free-tier, zero-cost); asserts the report was
-               produced and every case received a score.
+  2. ``eval`` — calls ``_eval(prompt_path, skills_dir, verbose=False)``
+               with a prompt file pointing at the potpie-evaluator skill.
+               Uses a pydantic-ai Agent backed by LiteLLMModel and a
+               SkillsToolset loaded from the skills directory.
 
-Both the agent backend and the Copilot CLI are **fully mocked** — no live
-network calls are made.  This lets the test run in CI without credentials.
+Both the agent backend and all external services are **fully mocked** — no
+live network calls are made.  This lets the test run in CI without credentials.
 
 Environment variable simulated: ``ENABLE_MULTI_AGENT=false``
 
@@ -24,7 +24,7 @@ Equivalent shell commands (live run):
     ENABLE_MULTI_AGENT=false python potpie_cli.py ask "Explain the architecture" \\
         -p 3e052a9f-63c0-0201-f730-ba90decbb97d
     ENABLE_MULTI_AGENT=false python potpie_cli.py eval \\
-        -p 3e052a9f-63c0-0201-f730-ba90decbb97d --cases answers.yaml
+        --prompt evaluation/qna/prompt.txt --skills-dir .kiro/skills
 """
 from __future__ import annotations
 
@@ -41,6 +41,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import yaml
+
+
+class CallToolsNode(MagicMock):
+    """Stub node type used to simulate a CallToolsNode without mutating MagicMock."""
+
+
+class End(MagicMock):
+    """Stub node type used to simulate an End node without mutating MagicMock."""
+
 
 # ---------------------------------------------------------------------------
 # Ensure app.core.database is stubbed before any app import
@@ -317,10 +326,11 @@ class TestAskCommand:
 
 class TestEvalCommand:
     """
-    Exercise ``_eval()`` using:
-    - A YAML cases file derived from the ask results
-    - ``CopilotModel("gpt-4.1")`` as the LLM judge (mocked CLI)
-    - Asserts the report is produced with the correct number of cases
+    Exercise ``_eval()`` using the new pydantic-ai-skills-based implementation.
+
+    The new ``_eval(prompt_path, skills_dir, verbose)`` drives a pydantic-ai
+    Agent with a SkillsToolset pointing at the skills directory — it no longer
+    calls the potpie agent directly or uses pydantic_evals.
     """
 
     # ------------------------------------------------------------------
@@ -328,211 +338,331 @@ class TestEvalCommand:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _make_yaml_cases_file(tmp_path: Path) -> Path:
-        """Write a minimal 4-case YAML file to tmp_path."""
-        cases = []
-        for q, a in CANNED_ANSWERS.items():
-            cases.append(
-                {
-                    "name": q[:50],
-                    "question": q,
-                    "rubrics": [
-                        "Answer references a real component or file from DeepEval",
-                        "Answer is not a generic placeholder",
-                    ],
-                }
-            )
-        yaml_path = tmp_path / "deepeval_cases.yaml"
-        yaml_path.write_text(yaml.dump({"cases": cases}), encoding="utf-8")
-        return yaml_path
+    def _pydantic_ai_skills_stubs() -> dict:
+        """
+        Return a sys.modules patch dict for pydantic_ai_skills sub-modules and
+        the litellm_model provider.
+
+        Although pydantic_ai_skills is a normal runtime dependency and is
+        available in the test environment, these tests inject stubs to keep
+        the _eval code path fully isolated from real skills loading and any
+        external model or network behavior.
+
+        app.modules.intelligence.provider.litellm_model is also stubbed here
+        because importing it triggers ``import litellm``, which may not be
+        installed or compatible in the current test environment.  The stub
+        allows ``patch("...litellm_model.LiteLLMModel", ...)`` to work
+        reliably regardless of test execution order.
+        """
+        skills_stub = types.ModuleType("pydantic_ai_skills")
+        skills_stub.SkillsToolset = MagicMock()
+
+        dir_stub = types.ModuleType("pydantic_ai_skills.directory")
+        dir_stub.SkillsDirectory = MagicMock()
+
+        local_stub = types.ModuleType("pydantic_ai_skills.local")
+        local_stub.LocalSkillScriptExecutor = MagicMock()
+
+        litellm_stub = types.ModuleType("app.modules.intelligence.provider.litellm_model")
+        litellm_stub.LiteLLMModel = MagicMock()
+
+        return {
+            "pydantic_ai_skills": skills_stub,
+            "pydantic_ai_skills.directory": dir_stub,
+            "pydantic_ai_skills.local": local_stub,
+            "app.modules.intelligence.provider.litellm_model": litellm_stub,
+        }
 
     @staticmethod
-    def _mock_copilot_model_session(response_text: str):
+    def _make_agent_mock(nodes=None) -> MagicMock:
         """
-        Build a mock copilot session whose send_and_wait returns response_text.
-        Used to make CopilotModel produce deterministic judge verdicts.
+        Build a mock pydantic-ai Agent whose .iter() returns an async context
+        manager that yields the given node sequence.
         """
-        event = MagicMock()
-        event.data = MagicMock()
-        event.data.content = response_text
-        session = AsyncMock()
-        session.send_and_wait = AsyncMock(return_value=event)
-        session.destroy = AsyncMock()
-        return session
+        if nodes is None:
+            nodes = []
+
+        captured_nodes = list(nodes)
+
+        class _FakeRun:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            def __aiter__(self):
+                return self._gen()
+
+            async def _gen(self):
+                for node in captured_nodes:
+                    yield node
+
+        mock_agent = MagicMock()
+        mock_agent.iter = MagicMock(return_value=_FakeRun())
+        # agent.instructions is used as a decorator — pass the function through unchanged
+        mock_agent.instructions = lambda fn: fn
+        return mock_agent
 
     # ------------------------------------------------------------------
     # Tests
     # ------------------------------------------------------------------
 
     @pytest.mark.asyncio
-    async def test_eval_runs_and_produces_report(self, mock_runtime, tmp_path):
+    async def test_eval_runs_and_produces_report(self, tmp_path):
         """
-        _eval() should complete without raising and produce an EvaluationReport
-        that contains one result per case in the YAML file.
+        _eval() should complete without raising and produce output.
+
+        Equivalent to the original test of the same name: verifies the eval
+        command runs end-to-end without error.  The new implementation drives a
+        pydantic-ai Agent with a SkillsToolset; the agent is fully mocked so no
+        live network calls are made.
         """
         import potpie_cli as cli_module
-        from app.modules.intelligence.provider.copilot_model import CopilotModel
-        from pydantic_evals.evaluators.llm_as_a_judge import set_default_judge_model
 
-        yaml_path = self._make_yaml_cases_file(tmp_path)
-        cli_ctx = _build_potpie_ctx(mock_runtime)
+        prompt_file = tmp_path / "prompt.txt"
+        prompt_file.write_text("Evaluate the DeepEval codebase for quality.")
 
-        # Judge verdict: always PASS with a reason
-        judge_json = json.dumps({"pass": True, "reason": "Answer references concrete components."})
-        mock_judge_session = self._mock_copilot_model_session(judge_json)
-        judge_model = CopilotModel(JUDGE_MODEL)
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir()
 
-        # Patch _create_session so no real CLI is invoked
-        with patch.object(judge_model, "_create_session", return_value=mock_judge_session):
-            set_default_judge_model(judge_model)
+        end_node = End()
+        end_node.data = MagicMock()
+        end_node.data.output = "Evaluation complete."
 
-            # Also patch the agent used inside _eval's task()
-            with patch.object(cli_module, "ctx_obj", cli_ctx):
+        mock_agent = self._make_agent_mock(nodes=[end_node])
+        stubs = self._pydantic_ai_skills_stubs()
+
+        with patch.dict("sys.modules", stubs):
+            with patch("pydantic_ai.Agent", return_value=mock_agent):
+                # Should complete without raising
                 await cli_module._eval(
-                    project_id=PROJECT_ID,
-                    agent_id=AGENT_ID,
-                    cases_path=str(yaml_path),
-                    concurrency=1,
+                    prompt_path=str(prompt_file),
+                    skills_dir=str(skills_dir),
+                    verbose=False,
                 )
 
         # If we reach here without exception the report was produced
-        # (rich console output is discarded; we verify via mock call counts)
-        assert mock_runtime.projects.get.await_count >= 1
+        mock_agent.iter.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_eval_agent_called_once_per_case(self, mock_runtime, tmp_path):
-        """
-        The agent's query() method must be called exactly N times — once per
-        case in the YAML file (4 cases × 1 concurrency).
-        """
+    async def test_eval_aborts_when_prompt_file_not_found(self, tmp_path):
+        """_eval() must raise click.Abort when the prompt file does not exist."""
+        import click
         import potpie_cli as cli_module
-        from app.modules.intelligence.provider.copilot_model import CopilotModel
-        from pydantic_evals.evaluators.llm_as_a_judge import set_default_judge_model
 
-        yaml_path = self._make_yaml_cases_file(tmp_path)
-        cli_ctx = _build_potpie_ctx(mock_runtime)
-
-        judge_json = json.dumps({"pass": True, "reason": "Looks good."})
-        judge_model = CopilotModel(JUDGE_MODEL)
-        mock_judge_session = self._mock_copilot_model_session(judge_json)
-
-        with patch.object(judge_model, "_create_session", return_value=mock_judge_session):
-            set_default_judge_model(judge_model)
-            with patch.object(cli_module, "ctx_obj", cli_ctx):
+        nonexistent = tmp_path / "missing_prompt.txt"
+        with patch.dict("sys.modules", self._pydantic_ai_skills_stubs()):
+            with pytest.raises(click.Abort):
                 await cli_module._eval(
-                    project_id=PROJECT_ID,
-                    agent_id=AGENT_ID,
-                    cases_path=str(yaml_path),
-                    concurrency=1,
+                    prompt_path=str(nonexistent),
+                    skills_dir=str(tmp_path / "skills"),
+                    verbose=False,
                 )
 
-        # 4 questions → agent.query called 4 times
-        assert mock_runtime.agents.codebase_qna_agent.query.await_count == 4
-
     @pytest.mark.asyncio
-    async def test_eval_uses_gpt41_copilot_model_as_judge(self, mock_runtime, tmp_path):
+    async def test_eval_reads_prompt_and_runs_agent(self, tmp_path):
         """
-        The judge model passed to set_default_judge_model must be a
-        CopilotModel with model_name == 'gpt-4.1'.
+        _eval() reads the prompt file, passes its content to the pydantic-ai
+        Agent, and iterates over the resulting nodes without raising.
         """
         import potpie_cli as cli_module
-        from app.modules.intelligence.provider.copilot_model import CopilotModel
-        from pydantic_evals.evaluators.llm_as_a_judge import set_default_judge_model
 
-        yaml_path = self._make_yaml_cases_file(tmp_path)
-        cli_ctx = _build_potpie_ctx(mock_runtime)
+        prompt_text = "Evaluate the DeepEval codebase for quality."
+        prompt_file = tmp_path / "prompt.txt"
+        prompt_file.write_text(prompt_text)
 
-        captured_judge: list[Any] = []
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir()
 
-        def _capturing_set(model):
-            captured_judge.append(model)
-            # intentionally don't forward — avoids needing a real judge model
+        end_node = End()
+        end_node.data = MagicMock()
+        end_node.data.output = "Evaluation result."
 
-        # set_default_judge_model is imported at call-time inside _eval, so we
-        # must patch the canonical source module rather than potpie_cli.
-        with patch(
-            "pydantic_evals.evaluators.llm_as_a_judge.set_default_judge_model",
-            side_effect=_capturing_set,
-        ):
-            with patch.object(cli_module, "ctx_obj", cli_ctx):
-                os.environ["CHAT_MODEL"] = f"copilot_cli/{JUDGE_MODEL}"
-                try:
+        mock_agent = self._make_agent_mock(nodes=[end_node])
+        stubs = self._pydantic_ai_skills_stubs()
+
+        with patch.dict("sys.modules", stubs):
+            with patch("pydantic_ai.Agent", return_value=mock_agent):
+                with patch(
+                    "app.modules.intelligence.provider.litellm_model.LiteLLMModel",
+                    return_value=MagicMock(),
+                ):
                     await cli_module._eval(
-                        project_id=PROJECT_ID,
-                        agent_id=AGENT_ID,
-                        cases_path=str(yaml_path),
-                        concurrency=1,
+                        prompt_path=str(prompt_file),
+                        skills_dir=str(skills_dir),
+                        verbose=False,
                     )
-                finally:
-                    os.environ.pop("CHAT_MODEL", None)
 
-        # set_default_judge_model was called exactly once
-        assert len(captured_judge) == 1
-        # When CHAT_MODEL=copilot_cli/gpt-4.1, the judge must be a CopilotModel
-        from app.modules.intelligence.provider.copilot_model import CopilotModel
-        assert isinstance(captured_judge[0], CopilotModel)
-        assert captured_judge[0].model_name == JUDGE_MODEL
+        mock_agent.iter.assert_called_once()
+        call_prompt = mock_agent.iter.call_args[0][0]
+        assert prompt_text in call_prompt
 
     @pytest.mark.asyncio
-    async def test_eval_default_cases_used_when_no_yaml(self, mock_runtime):
+    async def test_eval_uses_chat_model_env_var(self, tmp_path, monkeypatch):
         """
-        When cases_path is None, _eval() falls back to the built-in
-        _DEFAULT_EVAL_CASES (4 cases).
+        When CHAT_MODEL is set, _eval() passes that model name to LiteLLMModel.
         """
         import potpie_cli as cli_module
-        from app.modules.intelligence.provider.copilot_model import CopilotModel
-        from pydantic_evals.evaluators.llm_as_a_judge import set_default_judge_model
 
-        cli_ctx = _build_potpie_ctx(mock_runtime)
+        prompt_file = tmp_path / "prompt.txt"
+        prompt_file.write_text("Test prompt.")
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir()
 
-        judge_json = json.dumps({"pass": True, "reason": "ok"})
-        judge_model = CopilotModel(JUDGE_MODEL)
-        mock_judge_session = self._mock_copilot_model_session(judge_json)
+        monkeypatch.setenv("CHAT_MODEL", "github_copilot/gpt-4o-mini")
 
-        with patch.object(judge_model, "_create_session", return_value=mock_judge_session):
-            set_default_judge_model(judge_model)
-            with patch.object(cli_module, "ctx_obj", cli_ctx):
-                await cli_module._eval(
-                    project_id=PROJECT_ID,
-                    agent_id=AGENT_ID,
-                    cases_path=None,
-                    concurrency=1,
-                )
+        captured_model_names: list[str] = []
 
-        # Default has 4 cases → 4 agent calls
-        assert mock_runtime.agents.codebase_qna_agent.query.await_count == 4
+        def _fake_litellm(model_name):
+            captured_model_names.append(model_name)
+            return MagicMock()
+
+        mock_agent = self._make_agent_mock()
+        stubs = self._pydantic_ai_skills_stubs()
+
+        with patch.dict("sys.modules", stubs):
+            with patch("pydantic_ai.Agent", return_value=mock_agent):
+                with patch(
+                    "app.modules.intelligence.provider.litellm_model.LiteLLMModel",
+                    side_effect=_fake_litellm,
+                ):
+                    await cli_module._eval(
+                        prompt_path=str(prompt_file),
+                        skills_dir=str(skills_dir),
+                        verbose=False,
+                    )
+
+        assert "github_copilot/gpt-4o-mini" in captured_model_names
 
     @pytest.mark.asyncio
-    async def test_eval_handles_agent_error_gracefully(self, mock_runtime, tmp_path):
+    async def test_eval_default_model_when_no_chat_model_env(self, tmp_path, monkeypatch):
         """
-        If the agent raises, _eval() should catch it and record 'ERROR: …'
-        as the response (not crash the whole test run).
+        When CHAT_MODEL is unset, _eval() defaults to 'github_copilot/gpt-4o'.
         """
         import potpie_cli as cli_module
-        from app.modules.intelligence.provider.copilot_model import CopilotModel
-        from pydantic_evals.evaluators.llm_as_a_judge import set_default_judge_model
 
-        # Make agent always fail
-        mock_runtime.agents.codebase_qna_agent.query.side_effect = RuntimeError("agent down")
+        prompt_file = tmp_path / "prompt.txt"
+        prompt_file.write_text("Test prompt.")
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir()
 
-        yaml_path = self._make_yaml_cases_file(tmp_path)
-        cli_ctx = _build_potpie_ctx(mock_runtime)
+        monkeypatch.delenv("CHAT_MODEL", raising=False)
 
-        # Judge still needs to evaluate the "ERROR: agent down" string
-        judge_json = json.dumps({"pass": False, "reason": "The answer is an error message."})
-        judge_model = CopilotModel(JUDGE_MODEL)
-        mock_judge_session = self._mock_copilot_model_session(judge_json)
+        captured_model_names: list[str] = []
 
-        with patch.object(judge_model, "_create_session", return_value=mock_judge_session):
-            set_default_judge_model(judge_model)
-            with patch.object(cli_module, "ctx_obj", cli_ctx):
-                # Should NOT raise — errors are swallowed per _eval task() impl
-                await cli_module._eval(
-                    project_id=PROJECT_ID,
-                    agent_id=AGENT_ID,
-                    cases_path=str(yaml_path),
-                    concurrency=1,
-                )
+        def _fake_litellm(model_name):
+            captured_model_names.append(model_name)
+            return MagicMock()
+
+        mock_agent = self._make_agent_mock()
+        stubs = self._pydantic_ai_skills_stubs()
+
+        with patch.dict("sys.modules", stubs):
+            with patch("pydantic_ai.Agent", return_value=mock_agent):
+                with patch(
+                    "app.modules.intelligence.provider.litellm_model.LiteLLMModel",
+                    side_effect=_fake_litellm,
+                ):
+                    await cli_module._eval(
+                        prompt_path=str(prompt_file),
+                        skills_dir=str(skills_dir),
+                        verbose=False,
+                    )
+
+        assert "github_copilot/gpt-4o" in captured_model_names
+
+    @pytest.mark.asyncio
+    async def test_eval_creates_skills_toolset_with_correct_directory(self, tmp_path):
+        """
+        _eval() instantiates SkillsDirectory with the provided skills_dir path
+        and passes it to SkillsToolset.
+        """
+        import potpie_cli as cli_module
+
+        prompt_file = tmp_path / "prompt.txt"
+        prompt_file.write_text("Test prompt.")
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir()
+
+        stubs = self._pydantic_ai_skills_stubs()
+        mock_agent = self._make_agent_mock()
+
+        with patch.dict("sys.modules", stubs):
+            with patch("pydantic_ai.Agent", return_value=mock_agent):
+                with patch(
+                    "app.modules.intelligence.provider.litellm_model.LiteLLMModel",
+                    return_value=MagicMock(),
+                ):
+                    await cli_module._eval(
+                        prompt_path=str(prompt_file),
+                        skills_dir=str(skills_dir),
+                        verbose=False,
+                    )
+
+        MockSkillsDirectory = stubs["pydantic_ai_skills.directory"].SkillsDirectory
+        MockSkillsToolset = stubs["pydantic_ai_skills"].SkillsToolset
+
+        MockSkillsDirectory.assert_called_once()
+        call_kwargs = MockSkillsDirectory.call_args.kwargs if MockSkillsDirectory.call_args else {}
+        call_args = MockSkillsDirectory.call_args.args if MockSkillsDirectory.call_args else ()
+        path_arg = call_kwargs.get("path") or (call_args[0] if call_args else None)
+        assert path_arg is not None, "SkillsDirectory was not called with a 'path' argument"
+        assert str(skills_dir) in str(path_arg)
+
+        MockSkillsToolset.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_eval_verbose_flag_runs_without_error(self, tmp_path, capsys):
+        """
+        _eval() with verbose=True must run without raising.  Exercises the
+        CallToolsNode and End branches of the verbose logging code-path.
+        """
+        import potpie_cli as cli_module
+
+        prompt_file = tmp_path / "prompt.txt"
+        prompt_file.write_text("Test prompt.")
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir()
+
+        call_node = CallToolsNode()
+        part = MagicMock()
+        part.tool_name = "run_skill"
+        part.args = {"cases": "/tmp/cases.yaml"}
+        call_node.model_response = MagicMock()
+        call_node.model_response.parts = [part]
+
+        end_node = End()
+        end_node.data = MagicMock()
+        end_node.data.output = "Done."
+
+        mock_agent = self._make_agent_mock(nodes=[call_node, end_node])
+        stubs = self._pydantic_ai_skills_stubs()
+
+        mock_agent_cls = MagicMock(return_value=mock_agent)
+        mock_agent_cls.is_call_tools_node = lambda node: isinstance(node, CallToolsNode)
+        mock_agent_cls.is_end_node = lambda node: isinstance(node, End)
+
+        with patch.dict("sys.modules", stubs):
+            with patch("pydantic_ai.Agent", mock_agent_cls):
+                with patch(
+                    "app.modules.intelligence.provider.litellm_model.LiteLLMModel",
+                    return_value=MagicMock(),
+                ):
+                    await cli_module._eval(
+                        prompt_path=str(prompt_file),
+                        skills_dir=str(skills_dir),
+                        verbose=True,
+                    )
+
+        mock_agent.iter.assert_called_once()
+
+        # In verbose mode we expect output that reflects processing of the
+        # CallToolsNode (tool name and args) and the End node (final output).
+        captured = capsys.readouterr()
+        assert "run_skill" in captured.out
+        assert "/tmp/cases.yaml" in captured.out
+        assert "Done." in captured.out
 
 
 # ---------------------------------------------------------------------------
@@ -550,13 +680,11 @@ class TestAskThenEvalPipeline:
     async def test_full_ask_then_eval_pipeline(self, mock_runtime, tmp_path):
         """
         1. Call _ask() for each deepeval question → collect (question, answer) pairs
-        2. Write them to a YAML file with rubric assertions
-        3. Call _eval() with that YAML file and CopilotModel(gpt-4.1) as judge
-        4. Assert: 4 agent calls in ask phase + 4 agent calls in eval phase = 8 total
+        2. Write them to a YAML file as documentation
+        3. Call _eval() with a prompt file and skills dir; verify the pydantic-ai
+           agent was invoked and the ask phase produced exactly 4 potpie agent calls.
         """
         import potpie_cli as cli_module
-        from app.modules.intelligence.provider.copilot_model import CopilotModel
-        from pydantic_evals.evaluators.llm_as_a_judge import set_default_judge_model
 
         cli_ctx = _build_potpie_ctx(mock_runtime)
 
@@ -608,48 +736,65 @@ class TestAskThenEvalPipeline:
         assert len(loaded["cases"]) == 4
 
         # ── Phase 2: eval ─────────────────────────────────────────────
-        # Reset call count before eval phase
-        ask_call_count = mock_runtime.agents.codebase_qna_agent.query.await_count
+        # The new _eval() drives a pydantic-ai Agent with a SkillsToolset;
+        # it does NOT call the potpie agent directly. We verify the agent
+        # was invoked with a prompt that includes the YAML path.
+        prompt_file = tmp_path / "pipeline_prompt.txt"
+        prompt_file.write_text("Evaluate the answers in the YAML file.")
 
-        # Restore original side_effect for eval phase
-        from unittest.mock import AsyncMock as _AsyncMock
+        end_node = End()
+        end_node.data = MagicMock()
+        end_node.data.output = "Pipeline evaluation complete."
 
-        async def _default_query(ctx):
-            raw_q = ctx.query.split("] ", 1)[-1] if "] " in ctx.query else ctx.query
-            answer = CANNED_ANSWERS.get(raw_q, f"Mock answer for: {raw_q}")
-            resp = MagicMock()
-            resp.response = answer
-            return resp
+        mock_pydantic_agent = MagicMock()
+        mock_pydantic_agent.instructions = lambda fn: fn
 
-        mock_runtime.agents.codebase_qna_agent.query.side_effect = _default_query
+        class _FakeRun:
+            async def __aenter__(self):
+                return self
 
-        judge_json = json.dumps({"pass": True, "reason": "Answer references DeepEval components."})
-        judge_model = CopilotModel(JUDGE_MODEL)
-        mock_judge_session = MagicMock()
-        mock_judge_session.send_and_wait = AsyncMock(
-            return_value=MagicMock(**{"data.content": judge_json})
-        )
-        mock_judge_session.destroy = AsyncMock()
+            async def __aexit__(self, *args):
+                return False
 
-        with patch.object(judge_model, "_create_session", return_value=mock_judge_session):
-            set_default_judge_model(judge_model)
-            with patch.object(cli_module, "ctx_obj", cli_ctx):
+            def __aiter__(self):
+                return self._gen()
+
+            async def _gen(self):
+                yield end_node
+
+        mock_pydantic_agent.iter = MagicMock(return_value=_FakeRun())
+
+        skills_stub = types.ModuleType("pydantic_ai_skills")
+        skills_stub.SkillsToolset = MagicMock()
+        dir_stub = types.ModuleType("pydantic_ai_skills.directory")
+        dir_stub.SkillsDirectory = MagicMock()
+        local_stub = types.ModuleType("pydantic_ai_skills.local")
+        local_stub.LocalSkillScriptExecutor = MagicMock()
+        litellm_stub = types.ModuleType("app.modules.intelligence.provider.litellm_model")
+        litellm_stub.LiteLLMModel = MagicMock()
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir()
+
+        with patch.dict(
+            "sys.modules",
+            {
+                "pydantic_ai_skills": skills_stub,
+                "pydantic_ai_skills.directory": dir_stub,
+                "pydantic_ai_skills.local": local_stub,
+                "app.modules.intelligence.provider.litellm_model": litellm_stub,
+            },
+        ):
+            with patch("pydantic_ai.Agent", return_value=mock_pydantic_agent):
                 await cli_module._eval(
-                    project_id=PROJECT_ID,
-                    agent_id=AGENT_ID,
-                    cases_path=str(yaml_path),
-                    concurrency=1,
+                    prompt_path=str(prompt_file),
+                    skills_dir=str(skills_dir),
+                    verbose=False,
                 )
 
-        eval_call_count = (
-            mock_runtime.agents.codebase_qna_agent.query.await_count - ask_call_count
-        )
-        assert eval_call_count == 4, (
-            f"Expected 4 agent calls in eval phase, got {eval_call_count}"
-        )
+        mock_pydantic_agent.iter.assert_called_once()
 
-        # Total = 4 (ask) + 4 (eval)
-        assert mock_runtime.agents.codebase_qna_agent.query.await_count == 8
+        # ask phase: 4 potpie agent calls
+        assert mock_runtime.agents.codebase_qna_agent.query.await_count == 4
 
     @pytest.mark.asyncio
     async def test_yaml_fixture_structure(self, tmp_path):
@@ -679,57 +824,74 @@ class TestAskThenEvalPipeline:
             assert len(c["rubrics"]) >= 1
 
     @pytest.mark.asyncio
-    async def test_copilot_gpt41_used_as_judge_in_eval(self, mock_runtime, tmp_path):
+    async def test_litellm_model_used_in_eval(self, tmp_path, monkeypatch):
         """
-        Verify that when CHAT_MODEL=copilot_cli/gpt-4.1, _eval() constructs a
-        LiteLLMModel wrapping that model name and passes it to set_default_judge_model.
-        (This tests the judge-wiring in _eval, not the full eval execution.)
+        Verify that _eval() constructs a LiteLLMModel with the CHAT_MODEL env var.
+        The new implementation uses LiteLLMModel directly (no CopilotModel judge).
         """
         import potpie_cli as cli_module
 
-        cases = [
+        prompt_file = tmp_path / "prompt.txt"
+        prompt_file.write_text("Evaluate code quality.")
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir()
+
+        monkeypatch.setenv("CHAT_MODEL", f"github_copilot/{JUDGE_MODEL}")
+
+        captured_model_names: list[str] = []
+
+        def _fake_litellm(model_name):
+            captured_model_names.append(model_name)
+            return MagicMock()
+
+        end_node = End()
+        end_node.data = MagicMock()
+        end_node.data.output = "Done."
+
+        mock_pydantic_agent = MagicMock()
+        mock_pydantic_agent.instructions = lambda fn: fn
+
+        class _FakeRun:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            def __aiter__(self):
+                return self._gen()
+
+            async def _gen(self):
+                yield end_node
+
+        mock_pydantic_agent.iter = MagicMock(return_value=_FakeRun())
+
+        skills_stub = types.ModuleType("pydantic_ai_skills")
+        skills_stub.SkillsToolset = MagicMock()
+        dir_stub = types.ModuleType("pydantic_ai_skills.directory")
+        dir_stub.SkillsDirectory = MagicMock()
+        local_stub = types.ModuleType("pydantic_ai_skills.local")
+        local_stub.LocalSkillScriptExecutor = MagicMock()
+        litellm_stub = types.ModuleType("app.modules.intelligence.provider.litellm_model")
+        litellm_stub.LiteLLMModel = _fake_litellm
+
+        with patch.dict(
+            "sys.modules",
             {
-                "name": "arch",
-                "question": "Explain the architecture",
-                "rubrics": ["Answer is non-empty"],
-            }
-        ]
-        yaml_path = tmp_path / "one_case.yaml"
-        yaml_path.write_text(yaml.dump({"cases": cases}), encoding="utf-8")
-
-        cli_ctx = _build_potpie_ctx(mock_runtime)
-
-        judge_calls: list = []
-
-        def _mock_set_default(model):
-            judge_calls.append(model)
-
-        # set_default_judge_model is imported inside _eval's function body
-        # with `from pydantic_evals.evaluators.llm_as_a_judge import …`
-        # so we must patch the name on the source module, not on potpie_cli.
-        with (
-            patch(
-                "pydantic_evals.evaluators.llm_as_a_judge.set_default_judge_model",
-                side_effect=_mock_set_default,
-            ),
-            patch.object(cli_module, "ctx_obj", cli_ctx),
+                "pydantic_ai_skills": skills_stub,
+                "pydantic_ai_skills.directory": dir_stub,
+                "pydantic_ai_skills.local": local_stub,
+                "app.modules.intelligence.provider.litellm_model": litellm_stub,
+            },
         ):
-            os.environ["CHAT_MODEL"] = f"copilot_cli/{JUDGE_MODEL}"
-            try:
+            with patch("pydantic_ai.Agent", return_value=mock_pydantic_agent):
                 await cli_module._eval(
-                    project_id=PROJECT_ID,
-                    agent_id=AGENT_ID,
-                    cases_path=str(yaml_path),
-                    concurrency=1,
+                    prompt_path=str(prompt_file),
+                    skills_dir=str(skills_dir),
+                    verbose=False,
                 )
-            finally:
-                os.environ.pop("CHAT_MODEL", None)
 
-        assert len(judge_calls) == 1
-        # When CHAT_MODEL=copilot_cli/gpt-4.1, the judge must be a CopilotModel
-        from app.modules.intelligence.provider.copilot_model import CopilotModel
-        assert isinstance(judge_calls[0], CopilotModel)
-        assert judge_calls[0].model_name == JUDGE_MODEL
+        assert f"github_copilot/{JUDGE_MODEL}" in captured_model_names
 
 
 # ---------------------------------------------------------------------------

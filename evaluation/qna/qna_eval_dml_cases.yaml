@@ -1,0 +1,6 @@
+cases:
+  - question: "What is the overall architecture of this codebase?"
+  - question: "What is the main entry point of the DML compiler?"
+  - question: "How does the parser work in this project?"
+  - question: "What are the main external libraries or dependencies used?"
+  - question: "How is code generation implemented?"

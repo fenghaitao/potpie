@@ -527,36 +527,67 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
             # Use standard PydanticAI agent for text-only
             return await self._run_standard(ctx)
 
-    async def _run_standard(self, ctx: ChatContext) -> ChatAgentResponse:
-        """Standard text-only agent execution"""
-        try:
-            # Prepare message history
-            message_history = await self._prepare_multimodal_message_history(ctx)
+    # Tools whose results constitute retrieval context for faithfulness evaluation
+    _RETRIEVAL_TOOLS = frozenset({
+        "ask_knowledge_graph_queries",
+        "get_code_from_multiple_node_ids",
+        "get_code_from_probable_node_name",
+        "fetch_file",
+        "fetch_files_batch",
+    })
 
-            # Create and run agent
+    async def _run_standard(self, ctx: ChatContext) -> ChatAgentResponse:
+        """Standard text-only agent execution, capturing retrieval context via iter()."""
+        try:
+            message_history = await self._prepare_multimodal_message_history(ctx)
             agent = self._create_agent(ctx)
 
-            # Try to initialize MCP servers with timeout handling
-            try:
-                async with agent.run_mcp_servers():
-                    resp = await agent.run(
+            retrieval_chunks: List[str] = []
+            final_output: str = ""
+
+            async def _iter_run(ag: Agent, mcp: bool) -> str:
+                nonlocal retrieval_chunks
+
+                async def _run_once() -> str:
+                    output = ""
+                    async with ag.iter(
                         user_prompt=ctx.query,
                         message_history=message_history,
-                    )
-            except (TimeoutError, anyio.WouldBlock, Exception) as mcp_error:
-                logger.warning(f"MCP server initialization failed: {mcp_error}")
-                logger.info("Continuing without MCP servers...")
+                    ) as run:
+                        async for node in run:
+                            if Agent.is_call_tools_node(node):
+                                async with node.stream(run.ctx) as handle_stream:
+                                    async for event in handle_stream:
+                                        if isinstance(event, FunctionToolResultEvent):
+                                            tool_name = event.result.tool_name or ""
+                                            if tool_name in PydanticRagAgent._RETRIEVAL_TOOLS:
+                                                content = event.result.content
+                                                if content is not None:
+                                                    if not isinstance(content, str):
+                                                        content = str(content)
+                                                    content_str = content.strip()
+                                                    if content_str:
+                                                        retrieval_chunks.append(content_str)
+                        output = run.result.output if run.result else ""
+                    return output
 
-                # Fallback: run without MCP servers
-                resp = await agent.run(
-                    user_prompt=ctx.query,
-                    message_history=message_history,
-                )
+                if mcp:
+                    async with ag.run_mcp_servers():
+                        return await _run_once()
+                return await _run_once()
+
+            try:
+                final_output = await _iter_run(agent, mcp=True)
+            except (TimeoutError, anyio.WouldBlock, Exception) as mcp_error:
+                logger.warning(f"MCP server initialization failed: {mcp_error}, retrying without MCP")
+                retrieval_chunks = []
+                final_output = await _iter_run(agent, mcp=False)
 
             return ChatAgentResponse(
-                response=resp.output,
+                response=final_output,
                 tool_calls=[],
                 citations=[],
+                retrieval_context=retrieval_chunks,
             )
 
         except Exception as e:

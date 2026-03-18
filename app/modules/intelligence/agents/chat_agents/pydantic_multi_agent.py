@@ -228,7 +228,19 @@ class PydanticMultiAgent(ChatAgent):
                     "Images provided but current model doesn't support vision, proceeding with text-only"
                 )
             # Use standard PydanticAI multi-agent for text-only
-            return await self._standard_flow.run(ctx)
+            response = await self._standard_flow.run(ctx)
+            # Merge retrieval context captured from sub-agent tool calls
+            sub_agent_chunks = self._delegation_manager._retrieval_context
+            if sub_agent_chunks:
+                all_chunks = list(response.retrieval_context or []) + sub_agent_chunks
+                self._delegation_manager._retrieval_context = []  # reset for next run
+                return ChatAgentResponse(
+                    response=response.response,
+                    tool_calls=response.tool_calls,
+                    citations=response.citations,
+                    retrieval_context=all_chunks,
+                )
+            return response
 
     async def run_stream(
         self, ctx: ChatContext

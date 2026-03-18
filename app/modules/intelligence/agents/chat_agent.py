@@ -49,6 +49,10 @@ class ChatAgentResponse(BaseModel):
         ...,
         description="List of file names extracted from context and referenced in the response",
     )
+    retrieval_context: List[str] = Field(
+        default_factory=list,
+        description="Raw text chunks retrieved by the agent via code graph / file tools, used for faithfulness evaluation",
+    )
 
 
 class ChatContext(BaseModel):

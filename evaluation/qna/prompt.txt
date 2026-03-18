@@ -1,0 +1,1 @@
+Use potpie-evaluator to evaluate the qna with the cases in evaluation/qna/qna_eval_dml_cases.yaml for the device-modeling-language repo

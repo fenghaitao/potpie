@@ -46,6 +46,7 @@ dependencies = [
     "grpcio-tools>=1.62.0",
     "psycopg-binary>=3.2.12",
     "pydantic-ai>=1.56.0",
+    "pydantic-ai-skills>=0.5.1",
     "pydantic-ai-todo>=0.1.6",
     "github-copilot-sdk>=0.1.29",
     "pydantic[email]>=2.12.4",
