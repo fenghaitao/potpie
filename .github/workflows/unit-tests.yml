@@ -22,10 +22,8 @@ jobs:
     # Put these env vars at job scope so every step gets them
     env:
       UV_PYTHON: ${{ matrix.python-version }}
-      # Keep all caches/temp on the same filesystem as the workspace:
-      UV_CACHE_DIR: ${{ github.workspace }}/.uv-cache
-      XDG_CACHE_HOME: ${{ github.workspace }}/.cache
-      TMPDIR: ${{ github.workspace }}/.tmp
+      # uv defaults to ~/.cache/uv on Linux — a persistent runner-local path
+      # that survives between runs without going through actions/cache.
       # Force copy to avoid hardlink issues across NFS/FS boundaries:
       UV_LINK_MODE: copy
 
@@ -44,28 +42,6 @@ jobs:
       - name: Checkout submodules
         run: |
           git submodule update --init --recursive
-
-      - name: Ensure cache dirs exist (same FS as workspace)
-        run: |
-          mkdir -p "$UV_CACHE_DIR" "$XDG_CACHE_HOME" "$TMPDIR"
-
-      # Cache uv cache (now on workspace FS)
-      - name: Cache uv cache
-        uses: actions/cache@v4
-        with:
-          path: .uv-cache
-          key: uv-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('pyproject.toml', 'uv.lock') }}
-          restore-keys: |
-            uv-${{ runner.os }}-${{ matrix.python-version }}-
-
-      # Cache the venv itself
-      - name: Cache venv
-        uses: actions/cache@v4
-        with:
-          path: .venv
-          key: venv-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('pyproject.toml', 'uv.lock') }}
-          restore-keys: |
-            venv-${{ runner.os }}-${{ matrix.python-version }}-
 
       - name: Prepare Python & venv (install dev extra -> pytest)
         run: |
