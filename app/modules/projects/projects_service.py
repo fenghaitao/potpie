@@ -139,7 +139,7 @@ class ProjectService:
             branch_name=branch_name,
             user_id=user_id,
             repo_path=repo_path,
-            commit_id=commit_id,
+            commit_id='',
             status=ProjectStatusEnum.SUBMITTED.value,
         )
         try:
