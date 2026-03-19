@@ -5,6 +5,10 @@ set -e
 SINGULARITY_COMPOSE="$(cd "$(dirname "$0")" && pwd)/singularity-compose/.venv/bin/singularity-compose"
 cd "$(dirname "$0")/.."
 
+# Copy .env templates if .env files don't exist
+[ -f .env ] || cp .env.template .env
+[ -f potpie-ui/.env ] || cp potpie-ui/.env.template potpie-ui/.env
+
 source .env
 
 # Set up Service Account Credentials

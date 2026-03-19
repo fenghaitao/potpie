@@ -42,9 +42,16 @@ if [ ! -f postgres.sif ] || [ ! -f neo4j.sif ] || [ ! -f redis.sif ]; then
     $SINGULARITY_COMPOSE build
 fi
 
-# Ensure postgres data dir exists (created on fresh clone since no placeholder is tracked)
+# Ensure all bind-mount source directories exist (required before singularity-compose up)
+mkdir -p potpie-data/postgres \
+         potpie-data/run/postgresql \
+         potpie-data/neo4j/data \
+         potpie-data/neo4j/logs \
+         potpie-data/run/neo4j \
+         potpie-data/redis \
+         potpie-data/run/redis
+
 PG_DATA_DIR="potpie-data/postgres"
-mkdir -p "$PG_DATA_DIR"
 
 # Clean up stale postgres files if postgres is not actually running
 POSTMASTER_PID="potpie-data/postgres/postmaster.pid"
