@@ -7,6 +7,17 @@ SINGULARITY_COMPOSE="$(cd "$(dirname "$0")" && pwd)/singularity-compose/.venv/bi
 
 cd "$(dirname "$0")"
 
+# Ensure SINGULARITY_TMPDIR is set to a valid directory for host-side image
+# builds (Singularity calls mktemp internally when building SIF images).
+# We deliberately do NOT set or propagate TMPDIR: if it points to a host path
+# that isn't bind-mounted inside containers, startup scripts (e.g. Neo4j)
+# will fail when they call mktemp.  Unsetting TMPDIR here makes containers
+# fall back to /tmp which is always available inside Singularity instances.
+if [ -z "$SINGULARITY_TMPDIR" ] || [ ! -d "$SINGULARITY_TMPDIR" ]; then
+    export SINGULARITY_TMPDIR=/tmp
+fi
+unset TMPDIR
+
 # Bootstrap singularity-compose venv on first use
 if [ ! -x "$SINGULARITY_COMPOSE" ]; then
     echo "Setting up singularity-compose venv..."

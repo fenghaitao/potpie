@@ -26,8 +26,9 @@ bash singularity/up.sh
 # echo "Starting redis..."
 # singularity exec instance://redis1 redis-cli ping 2>/dev/null | grep -q PONG || \
 #   singularity exec instance://redis1 redis-server /data/redis-runtime.conf --daemonize yes 2>&1 || true
-# echo "Starting neo4j..."
-# singularity exec instance://neo4j1 neo4j start 2>&1 || true
+# Neo4j does not auto-start inside the Singularity instance - start it explicitly.
+echo "Starting neo4j..."
+singularity exec instance://neo4j1 neo4j start 2>&1 || true
 
 # Wait for postgres to be ready
 echo "Waiting for postgres to be ready..."
@@ -97,12 +98,12 @@ source .venv/bin/activate
 
 alembic upgrade heads
 
-echo "Starting momentum application..."
-gunicorn --worker-class uvicorn.workers.UvicornWorker --workers 1 --timeout 1800 --bind 0.0.0.0:8001 --log-level debug app.main:app &
-
-# Wait for neo4j bolt port to be ready.
-# Phase 1: fast TCP check (no JVM spawn per iteration) until the port opens.
-# Phase 2: one-time cypher-shell auth check once the port is accepting connections.
+# Wait for neo4j to be ready BEFORE starting the application.
+# The app requires neo4j at startup; starting gunicorn before neo4j is ready
+# causes startup errors and the extension to never see a healthy API.
+#
+# Phase 1: fast TCP check until the bolt port opens (no JVM spawn per tick).
+# Phase 2: cypher-shell auth check once the port accepts connections.
 echo "Waiting for neo4j to be ready..."
 NEO4J_BOLT_PORT="${SNG_NEO4J_BOLT_PORT:-7687}"
 NEO4J_PASSWORD="${NEO4J_PASSWORD:-mysecretpassword}"
@@ -110,14 +111,40 @@ until (echo >/dev/tcp/127.0.0.1/${NEO4J_BOLT_PORT}) >/dev/null 2>&1; do
   echo "Neo4j is unavailable - sleeping"
   sleep 3
 done
-# Port is open - now verify auth is accepted (bolt handshake can still lag)
+# Port is open — now verify auth is accepted (bolt handshake can still lag)
+NEO4J_WAIT_MAX=300  # seconds (APOC plugin loading can take 2-3 min)
+NEO4J_WAITED=0
 until singularity exec instance://neo4j1 cypher-shell -u neo4j -p "${NEO4J_PASSWORD}" "RETURN 1" >/dev/null 2>&1; do
   echo "Neo4j port open but auth not ready - sleeping"
   sleep 3
+  NEO4J_WAITED=$((NEO4J_WAITED + 3))
+  if [ "$NEO4J_WAITED" -ge "$NEO4J_WAIT_MAX" ]; then
+    echo "ERROR: Neo4j did not become ready after ${NEO4J_WAIT_MAX}s."
+    echo "Check Neo4j logs with: singularity exec instance://neo4j1 cat /var/lib/neo4j/logs/neo4j.log"
+    exit 1
+  fi
 done
 echo "Neo4j is up"
 
+echo "Starting momentum application..."
+gunicorn --worker-class uvicorn.workers.UvicornWorker --workers 1 --timeout 1800 --bind 0.0.0.0:8001 --log-level debug app.main:app &
+
 echo "Starting Celery worker..."
 celery -A app.celery.celery_app worker --loglevel=debug -Q "${CELERY_QUEUE_NAME}_process_repository,${CELERY_QUEUE_NAME}_agent_tasks" -E --concurrency=1 --pool=solo &
+
+# Poll the API health endpoint until the server is accepting requests.
+# Only then do we print "Potpie is running!" and exit with 0, so the VS Code
+# extension's runScript promise resolves and the tree switches to 'ready'.
+echo "Waiting for API to be healthy..."
+API_WAIT_MAX=120
+API_WAITED=0
+until curl -sf http://localhost:8001/health >/dev/null 2>&1; do
+  sleep 2
+  API_WAITED=$((API_WAITED + 2))
+  if [ "$API_WAITED" -ge "$API_WAIT_MAX" ]; then
+    echo "ERROR: API did not become healthy after ${API_WAIT_MAX}s."
+    exit 1
+  fi
+done
 
 echo "Potpie is running!"

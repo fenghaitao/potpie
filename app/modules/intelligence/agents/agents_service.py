@@ -31,6 +31,7 @@ from .chat_agents.system_agents import (
     blast_radius_agent,
     code_gen_agent,
     debug_agent,
+    deepwiki_open_agent,
     integration_test_agent,
     low_level_design_agent,
     qna_agent,
@@ -177,6 +178,14 @@ class AgentsService:
                 name="Wiki Documentation Agent",
                 description="Generate comprehensive wiki documentation from code. Creates structured pages with API references, examples, and diagrams, written to .qoder/repowiki/.",
                 agent=wiki_agent.WikiAgent(
+                    llm_provider, tools_provider, prompt_provider
+                ),
+            ),
+            "deepwiki_open_agent": AgentWithInfo(
+                id="deepwiki_open_agent",
+                name="DeepWiki Open Agent",
+                description="Generate comprehensive wiki documentation using deepwiki-open methodology. Analyzes project structure, plans wiki hierarchy, and generates detailed pages with code references.",
+                agent=deepwiki_open_agent.DeepWikiOpenAgent(
                     llm_provider, tools_provider, prompt_provider
                 ),
             ),
