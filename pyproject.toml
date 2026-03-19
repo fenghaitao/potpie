@@ -119,6 +119,7 @@ markers = [
     "unit: Unit tests",
     "integration: Integration tests",
     "asyncio: Async tests",
+    "neo4j_live: Tests that require a live Neo4j instance and real LLM",
 ]
 asyncio_mode = "auto"
 addopts = "-v --strict-markers --tb=short --disable-warnings"

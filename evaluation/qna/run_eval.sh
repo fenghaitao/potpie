@@ -29,30 +29,7 @@ source .env
 
 echo "[INFO] Looking up project ID for repo: $REPO_NAME"
 
-PROJECT_ID="$(.venv/bin/python - <<EOF
-import asyncio, sys, os
-sys.path.insert(0, ".")
-from dotenv import load_dotenv
-load_dotenv(".env", override=False)
-
-async def main():
-    from potpie.runtime import PotpieRuntime
-    runtime = PotpieRuntime.from_env()
-    await runtime.initialize()
-    try:
-        user_id = os.environ.get("POTPIE_USER_ID", "defaultuser")
-        projects = await runtime.projects.list(user_id=user_id)
-        matches = [p for p in projects if p.repo_name == "$REPO_NAME"]
-        if not matches:
-            print(f"ERROR: no project found with repo_name='$REPO_NAME'", file=sys.stderr)
-            sys.exit(1)
-        print(matches[0].id)
-    finally:
-        await runtime.close()
-
-asyncio.run(main())
-EOF
-)"
+PROJECT_ID="$(.venv/bin/python "$REPO_ROOT/evaluation/get_project_id.py" --repo "$REPO_NAME")"
 
 if [[ -z "$PROJECT_ID" ]]; then
     echo "[ERROR] Could not resolve project ID for repo '$REPO_NAME'" >&2
