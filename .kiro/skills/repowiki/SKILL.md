@@ -7,8 +7,42 @@ description: 'Analyzes Python, TypeScript, and C++ source files in a repository 
 
 This skill generates a GitHub wiki or docs folder for a repository. It works in two phases:
 
-1. **Extraction** — a bundled Python tool discovers source files and parses their structure (classes, functions, docstrings, type annotations) into a structured JSON document.
-2. **Wiki generation** — you (the agent) read that JSON and write rich, human-readable Markdown wiki pages for each module, using your understanding of the code to produce clear prose, not just a reflection of the raw structure.
+1. **Extraction** — queries the potpie Neo4j knowledge graph for FILE/CLASS/FUNCTION nodes to get the repository structure (no re-parsing needed).
+2. **Wiki generation** — an LLM agent writes rich, human-readable Markdown wiki pages for each module in batches, then writes a README index.
+
+## Primary entry point: `generate_wiki` script
+
+The recommended way to use this skill is via the `generate_wiki` script, which runs both phases end-to-end using the potpie venv Python:
+
+```bash
+.venv/bin/python .kiro/skills/repowiki/scripts/generate_wiki.py \
+  --project-id <uuid> \
+  --repo-path /abs/path/to/repo \
+  --output-dir /abs/path/to/.repowiki
+```
+
+**Arguments:**
+
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `--project-id` | yes | Potpie project UUID (from `potpie-cli parse repo`) |
+| `--repo-path` | yes | Absolute path to the repository root |
+| `--output-dir` | yes | Directory to write wiki pages into |
+| `--verbose` / `-v` | no | Show debug output |
+
+When invoked via `run_skill_script`, use:
+
+```python
+run_skill_script(
+    skill="repowiki",
+    script="scripts/generate_wiki.py",
+    args={
+        "project_id": "<uuid>",
+        "repo_path": "/abs/path/to/repo",
+        "output_dir": "/abs/path/to/.repowiki",
+    }
+)
+```
 
 ## Installation
 

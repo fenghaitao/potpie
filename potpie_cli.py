@@ -564,97 +564,139 @@ async def _code(description: str, project_id: Optional[str], preview: bool):
 
 
 @cli.command()
-@click.option('--project', '-p', help='Project ID')
-@click.option('--query', '-q',
-              default=None,
-              help='Custom wiki generation instruction')
-@click.option('--section', '-s', default=None,
-              help='Generate only a specific section, e.g. "Core Architecture"')
-def wiki(project: Optional[str], query: str, section: Optional[str]):
+@click.option('--repo-name', '-r', required=True,
+              help='Repository name (as registered in potpie)')
+@click.option('--branch', '-b', default='main', show_default=True,
+              help='Branch name')
+@click.option('--output-dir', '-o', default=None,
+              help='Output directory for wiki pages (default: <repo_path>/.repowiki)')
+@click.option('--skills-dir', default='.kiro/skills', show_default=True,
+              help='Directory containing skill definitions')
+@click.option('--timeout', '-t', default=1200, show_default=True, type=int,
+              help='Timeout in seconds for the skill script executor')
+@click.option('--verbose', '-v', is_flag=True, default=False,
+              help='Show debug logging')
+def wiki(repo_name: str, branch: str, output_dir: Optional[str],
+         skills_dir: str, timeout: int, verbose: bool):
     """
-    📖 Generate wiki pages for a project into .repowiki/.
+    📖 Generate wiki documentation for a repository using the repowiki skill.
 
     Examples:
-        potpie-cli wiki                                      # Generate full wiki for last project
-        potpie-cli wiki -p <project-id>                      # Specify project
-        potpie-cli wiki -s "Core Architecture"               # One section only
-        potpie-cli wiki -q "Document the auth module only"   # Custom instruction
+        potpie-cli wiki -r device-modeling-language -b main
+        potpie-cli wiki -r myrepo -b develop -o docs/wiki
+        potpie-cli wiki -r myrepo --timeout 1800
     """
-    if query is None:
-        if section:
-            query = f'Generate wiki pages for the "{section}" section only'
-        else:
-            query = 'Generate wiki pages for the entire repository'
-    asyncio.run(_wiki(project, query))
+    asyncio.run(_wiki(repo_name, branch, output_dir, skills_dir, timeout, verbose))
 
 
-async def _wiki(project_id: Optional[str], query: str):
-    """Wiki generation implementation."""
-    try:
-        if not project_id:
-            project_id = _get_last_project()
-            if not project_id:
-                console.print("[yellow]No project specified. Use --project <id> or parse a repo first.[/yellow]")
-                raise click.Abort()
+async def _wiki(repo_name: str, branch: str, output_dir: Optional[str],
+                skills_dir: str, timeout: int, verbose: bool):
+    """Wiki generation via repowiki skill — mirrors _eval pattern."""
+    import os
+    from pydantic_ai import Agent, RunContext
+    from pydantic_ai_skills import SkillsToolset
+    from pydantic_ai_skills.directory import SkillsDirectory
+    from pydantic_ai_skills.local import LocalSkillScriptExecutor
+    from app.modules.intelligence.provider.litellm_model import LiteLLMModel
 
-        runtime = await ctx_obj.get_runtime()
+    def dbg(msg):
+        if verbose:
+            console.print(f"[dim]{msg}[/dim]")
 
-        try:
-            agent = runtime.agents.wiki_agent
-        except AttributeError:
-            console.print("[red]wiki_agent not found. Make sure it is registered in agents_service.py.[/red]")
-            raise click.Abort()
-
-        project_info = await runtime.projects.get(project_id)
-
-        console.print(Panel.fit(
-            f"[bold cyan]Project:[/bold cyan] {project_info.repo_name}\n"
-            f"[bold cyan]Project ID:[/bold cyan] {project_id}\n"
-            f"[bold cyan]Output:[/bold cyan] .repowiki/en/content/\n"
-            f"[bold cyan]Query:[/bold cyan] {query}",
-            title="📖 Wiki Generation",
-            border_style="cyan"
-        ))
-
-        ctx = ChatContext(
-            project_id=project_id,
-            project_name=project_info.repo_name,
-            curr_agent_id="wiki_agent",
-            query=f"[Codebase: {project_info.repo_name}, project_id: {project_id}] {query}",
-            history=[],
-            user_id=ctx_obj.default_user_id,
-            conversation_id=f"wiki_{project_id}",
-        )
-
-        console.print("\n[bold green]🤖 Wiki Agent:[/bold green] generating...\n")
-
-        from potpie.agents.context import ToolCallEventType
-        pages_written = []
-        async for chunk in agent.stream(ctx):
-            if chunk.tool_calls:
-                for tc in chunk.tool_calls:
-                    if tc.event_type == ToolCallEventType.CALL:
-                        console.print(f"\n[dim cyan]🔧 {tc.tool_name}[/dim cyan]", end="", markup=True)
-            if chunk.response:
-                console.print(chunk.response, end="", markup=False)
-                # track written pages from tool output lines
-                if "✅ Wiki page written to:" in chunk.response:
-                    for line in chunk.response.splitlines():
-                        if "✅ Wiki page written to:" in line:
-                            pages_written.append(line.split("✅ Wiki page written to:")[-1].strip())
-
-        console.print("\n")
-
-        if pages_written:
-            console.print(f"\n[bold green]✅ {len(pages_written)} wiki page(s) written:[/bold green]")
-            for p in pages_written:
-                console.print(f"   [cyan]{p}[/cyan]")
-        else:
-            console.print("[yellow]Wiki generation complete. Check .repowiki/en/content/ for output.[/yellow]")
-
-    except Exception as e:
-        console.print(f"[bold red]Error:[/bold red] {e}")
+    # Resolve project
+    runtime = await ctx_obj.get_runtime()
+    projects = await runtime.projects.list(user_id=ctx_obj.default_user_id)
+    matches = [p for p in projects if p.repo_name == repo_name and p.branch_name == branch]
+    if not matches:
+        console.print(f"[bold red]Error:[/bold red] No project found for repo='{repo_name}' branch='{branch}'.")
+        all_branches = [p.branch_name for p in projects if p.repo_name == repo_name]
+        if all_branches:
+            console.print(f"[yellow]Available branches for '{repo_name}': {all_branches}[/yellow]")
         raise click.Abort()
+
+    project = matches[0]
+    repo_path = project.repo_path
+
+    if not repo_path:
+        try:
+            repo_path = await runtime.repositories.get_path(
+                repo_name, ctx_obj.default_user_id, branch=branch
+            )
+        except Exception:
+            repo_path = None
+
+    if not repo_path:
+        candidate = Path(repo_name)
+        if candidate.exists():
+            repo_path = str(candidate.absolute())
+
+    if not repo_path:
+        console.print(f"[bold red]Error:[/bold red] Could not resolve local path for repo='{repo_name}' branch='{branch}'.")
+        raise click.Abort()
+
+    if output_dir is None:
+        output_dir = str(Path(repo_path) / ".repowiki")
+    else:
+        output_dir = str(Path(output_dir).expanduser().resolve())
+
+    skills_path = Path(skills_dir)
+    if not skills_path.is_absolute():
+        skills_path = Path(__file__).parent / skills_path
+
+    console.print(Panel.fit(
+        f"[bold cyan]Repository:[/bold cyan] {repo_name}\n"
+        f"[bold cyan]Branch:[/bold cyan] {branch}\n"
+        f"[bold cyan]Project ID:[/bold cyan] {project.id}\n"
+        f"[bold cyan]Path:[/bold cyan] {repo_path}\n"
+        f"[bold cyan]Output:[/bold cyan] {output_dir}",
+        title="📖 Wiki Generation",
+        border_style="cyan"
+    ))
+
+    user_prompt = (
+        f"Generate wiki documentation for the repository.\n"
+        f"Use the repowiki skill's generate_wiki script with these args:\n"
+        f"  project_id: '{project.id}'\n"
+        f"  repo_path: '{repo_path}'\n"
+        f"  output_dir: '{output_dir}'\n"
+        f"\nIMPORTANT: run_skill_script takes args as a dict, not a list."
+        f" Use: skill_name='repowiki', script_name='scripts/generate_wiki.py',"
+        f" args={{'project_id': '{project.id}', 'repo_path': '{repo_path}', 'output_dir': '{output_dir}'}}"
+    )
+
+    model_name = os.environ.get("CHAT_MODEL", "github_copilot/gpt-4o")
+    model = LiteLLMModel(model_name)
+
+    executor = LocalSkillScriptExecutor(timeout=timeout)
+    skills_dir_obj = SkillsDirectory(path=str(skills_path), script_executor=executor)
+    skills_toolset = SkillsToolset(directories=[skills_dir_obj])
+
+    agent = Agent(
+        model=model,
+        instructions="You are a technical documentation expert.",
+        toolsets=[skills_toolset],
+    )
+
+    @agent.instructions
+    async def add_skills(ctx: RunContext) -> str | None:
+        return await skills_toolset.get_instructions(ctx)
+
+    console.print(f"\n[bold cyan]📖 Running wiki generation via repowiki skill[/bold cyan]\n")
+    dbg(f"Prompt: {user_prompt}")
+
+    async with agent.iter(user_prompt) as agent_run:
+        dbg("Agent started, iterating nodes...")
+        async for node in agent_run:
+            dbg(f"Node: {type(node).__name__}")
+            if Agent.is_call_tools_node(node):
+                for part in node.model_response.parts:
+                    if hasattr(part, "tool_name"):
+                        console.print(f"\n[dim cyan]🔧 {part.tool_name}[/dim cyan]")
+                        if verbose and hasattr(part, "args"):
+                            dbg(f"  args: {part.args}")
+            elif Agent.is_end_node(node):
+                console.print(f"\n[bold green]✅ Done:[/bold green]\n")
+                console.print(Markdown(str(node.data.output)))
 
 
 @cli.command()
@@ -701,7 +743,7 @@ async def _deepwiki_open_wiki(repo_path: str, project_id: Optional[str], concise
         # If no project ID, try to parse the repo first
         if not project_id:
             console.print("[yellow]No project ID provided. Parsing repository first...[/yellow]")
-            
+
             # Auto-detect branch
             try:
                 from git import Repo as GitRepo
@@ -717,7 +759,7 @@ async def _deepwiki_open_wiki(repo_path: str, project_id: Optional[str], concise
                 console=console,
             ) as progress:
                 task = progress.add_task("📝 Registering and parsing project...", total=None)
-                
+
                 project_id = await runtime.projects.register(
                     repo_name=repo_name,
                     branch_name=branch,
@@ -725,7 +767,7 @@ async def _deepwiki_open_wiki(repo_path: str, project_id: Optional[str], concise
                     repo_path=repo_path,
                     commit_id=commit_id,
                 )
-                
+
                 result = await runtime.parsing.parse_project(
                     project_id=project_id,
                     user_id=ctx_obj.default_user_id,
@@ -733,13 +775,13 @@ async def _deepwiki_open_wiki(repo_path: str, project_id: Optional[str], concise
                     cleanup_graph=True,
                     commit_id=commit_id,
                 )
-                
+
                 progress.update(task, completed=True)
-            
+
             if not result.success:
                 console.print(f"[bold red]❌ Parsing failed:[/bold red] {result.error_message}")
                 raise click.Abort()
-            
+
             console.print(f"[bold green]✅ Project parsed successfully![/bold green] ID: {project_id}\n")
 
         # Get agent
@@ -1130,9 +1172,11 @@ def _get_last_project() -> Optional[str]:
               help="Path to prompt file describing the evaluation task")
 @click.option("--skills-dir", default=".kiro/skills", show_default=True,
               help="Directory containing skill definitions")
+@click.option("--timeout", "-t", default=600, show_default=True, type=int,
+              help="Timeout in seconds for the skill script executor")
 @click.option("--verbose", "-v", is_flag=True, default=False,
               help="Show debug logging (node types, executor steps, tool args)")
-def eval(prompt: str, skills_dir: str, verbose: bool):
+def eval(prompt: str, skills_dir: str, timeout: int, verbose: bool):
     """
     🧪 Evaluate agent response quality using the potpie-evaluator skill.
 
@@ -1144,11 +1188,12 @@ def eval(prompt: str, skills_dir: str, verbose: bool):
         potpie-cli eval --verbose
         potpie-cli eval --prompt evaluation/qna/prompt.txt
         potpie-cli eval --skills-dir .kiro/skills
+        potpie-cli eval --timeout 900
     """
-    asyncio.run(_eval(prompt, skills_dir, verbose))
+    asyncio.run(_eval(prompt, skills_dir, timeout, verbose))
 
 
-async def _eval(prompt_path: str, skills_dir: str, verbose: bool = False):
+async def _eval(prompt_path: str, skills_dir: str, timeout: int = 600, verbose: bool = False):
     import os
     from pydantic_ai import Agent, RunContext
     from pydantic_ai_skills import SkillsToolset
@@ -1187,7 +1232,7 @@ async def _eval(prompt_path: str, skills_dir: str, verbose: bool = False):
     from pydantic_ai_skills.local import LocalSkillScriptExecutor
     model = LiteLLMModel(model_name)
 
-    executor = LocalSkillScriptExecutor(timeout=600)
+    executor = LocalSkillScriptExecutor(timeout=timeout)
     skills_dir_obj = SkillsDirectory(path=str(skills_path), script_executor=executor)
     skills_toolset = SkillsToolset(directories=[skills_dir_obj])
 

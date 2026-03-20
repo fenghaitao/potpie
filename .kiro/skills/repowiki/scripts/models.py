@@ -8,8 +8,9 @@ from typing import List, Optional
 
 @dataclass
 class SourceFile:
-    path: str
-    language: str  # "python" | "typescript" | "cpp"
+    path: str          # absolute path (for reading)
+    language: str      # "python" | "typescript" | "cpp"
+    rel_path: str = "" # path relative to target (for output)
 
 
 @dataclass
@@ -46,7 +47,7 @@ class TypeDef:
 
 @dataclass
 class CodeModule:
-    path: str
+    path: str          # relative path (for output/display)
     language: str
     description: str = ""
     imports: List[str] = field(default_factory=list)
