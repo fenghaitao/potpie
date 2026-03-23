@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+  <!-- Pie dish base -->
+  <ellipse cx="12" cy="16" rx="9" ry="4" fill="currentColor" opacity="0.2"/>
+  <path d="M3 16 Q3 21 12 21 Q21 21 21 16" fill="currentColor" opacity="0.35"/>
+  <!-- Pie top crust -->
+  <path d="M3 13 Q3 9 12 9 Q21 9 21 13 L21 16 Q21 20 12 20 Q3 20 3 16 Z"
+        fill="currentColor" opacity="0.5"/>
+  <!-- Pie steam lines -->
+  <path d="M9 7 Q9.5 5 9 3" stroke="currentColor" stroke-width="1.2"/>
+  <path d="M12 6 Q12.5 4 12 2" stroke="currentColor" stroke-width="1.2"/>
+  <path d="M15 7 Q15.5 5 15 3" stroke="currentColor" stroke-width="1.2"/>
+</svg>

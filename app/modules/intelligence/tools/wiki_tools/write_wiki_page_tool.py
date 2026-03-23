@@ -9,8 +9,11 @@ from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
-# Root of the wiki relative to the workspace
-WIKI_ROOT = Path(".repowiki/en/content")
+# Root of the wiki — overridden by POTPIE_WIKI_OUTPUT_DIR env var when set
+# (used by the VS Code extension to write to a controlled workspace location)
+def _get_wiki_root() -> Path:
+    env_dir = os.environ.get("POTPIE_WIKI_OUTPUT_DIR")
+    return Path(env_dir) if env_dir else Path(".repowiki/en/content")
 
 VALID_SECTIONS = [
     "API Reference",
@@ -57,20 +60,28 @@ def _write_wiki_page(
     content: str,
     subsection: Optional[str] = None,
 ) -> str:
-    """Write a wiki page to .qoder/repowiki/en/content/<section>/[subsection/]<page_title>.md"""
+    """Write a wiki page to <WIKI_ROOT>/<section>/[subsection/]<page_title>.md"""
     try:
+        wiki_root = _get_wiki_root()
         if subsection:
-            page_dir = WIKI_ROOT / section / subsection
+            page_dir = wiki_root / section / subsection
         else:
-            page_dir = WIKI_ROOT / section
+            page_dir = wiki_root / section
 
         page_dir.mkdir(parents=True, exist_ok=True)
         page_path = page_dir / f"{page_title}.md"
         page_path.write_text(content, encoding="utf-8")
 
-        relative_path = page_path.relative_to(Path("."))
-        logger.info(f"Wiki page written: {relative_path}")
-        return f"✅ Wiki page written to: {relative_path}"
+        try:
+            # Compute a display-friendly relative path; this works even if wiki_root
+            # is outside the current working directory. Fall back to the full path
+            # if a relative path cannot be determined (e.g., cross-drive on Windows).
+            relative_path_str = os.path.relpath(page_path)
+        except Exception:
+            relative_path_str = str(page_path)
+
+        logger.info(f"Wiki page written: {relative_path_str}")
+        return f"✅ Wiki page written to: {relative_path_str}"
     except Exception as e:
         logger.error(f"Failed to write wiki page '{page_title}': {e}")
         return f"❌ Failed to write wiki page: {e}"

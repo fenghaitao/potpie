@@ -1,0 +1,201 @@
+{
+  "name": "potpie-ext",
+  "displayName": "Potpie",
+  "description": "Potpie — AI-powered code understanding and chat inside VS Code",
+  "version": "0.1.0",
+  "publisher": "potpie",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/intel-sandbox/potpie"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other",
+    "Programming Languages"
+  ],
+  "keywords": [
+    "potpie",
+    "ai",
+    "chat",
+    "code",
+    "wiki"
+  ],
+  "activationEvents": [
+    "onView:potpie.repoTree",
+    "onCommand:potpie.parseNewRepo",
+    "onCommand:potpie.openPanel",
+    "onCommand:potpie.selectProject"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "potpie-container",
+          "title": "Potpie",
+          "icon": "resources/potpie.svg"
+        }
+      ]
+    },
+    "views": {
+      "potpie-container": [
+        {
+          "id": "potpie.repoTree",
+          "name": "Repositories",
+          "contextualTitle": "Potpie — Repositories",
+          "visibility": "visible"
+        },
+        {
+          "id": "potpie.wikiView",
+          "name": "Wiki",
+          "contextualTitle": "Potpie — Wiki",
+          "visibility": "visible"
+        },
+        {
+          "id": "potpie.chatView",
+          "name": "Chat",
+          "type": "webview",
+          "visibility": "visible"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "potpie.repoTree",
+        "contents": "No repositories parsed yet.\n\n[$(add) Parse New Repo](command:potpie.parseNewRepo)\n\nSelect a repository to view its wiki or start a chat."
+      },
+      {
+        "view": "potpie.wikiView",
+        "contents": "No wiki found for the selected repository.\n\n[$(book) Generate DeepWiki](command:potpie.generateWiki)"
+      }
+    ],
+    "commands": [
+      {
+        "command": "potpie.parseNewRepo",
+        "title": "Parse New Repo",
+        "category": "Potpie",
+        "icon": "$(add)"
+      },
+      {
+        "command": "potpie.openPanel",
+        "title": "Open Potpie Panel",
+        "category": "Potpie",
+        "icon": "$(layout-panel)"
+      },
+      {
+        "command": "potpie.selectProject",
+        "title": "Select Project",
+        "category": "Potpie"
+      },
+      {
+        "command": "potpie.removeProject",
+        "title": "Remove Project",
+        "category": "Potpie",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "potpie.setWorkspace",
+        "title": "Set Workspace Directory",
+        "category": "Potpie",
+        "icon": "$(folder-opened)"
+      },
+      {
+        "command": "potpie.showWorkspace",
+        "title": "Show Workspace Path",
+        "category": "Potpie",
+        "icon": "$(info)"
+      },
+      {
+        "command": "potpie.generateWiki",
+        "title": "Generate DeepWiki",
+        "category": "Potpie",
+        "icon": "$(book)"
+      },
+      {
+        "command": "potpie.viewWiki",
+        "title": "View DeepWiki",
+        "category": "Potpie",
+        "icon": "$(preview)"
+      },
+      {
+        "command": "potpie.openWikiPage",
+        "title": "Open Wiki Page",
+        "category": "Potpie"
+      },
+      {
+        "command": "potpie.evaluateWiki",
+        "title": "Evaluate Wiki",
+        "category": "Potpie",
+        "icon": "$(beaker)"
+      },
+      {
+        "command": "potpie.clearChat",
+        "title": "Clear Chat History",
+        "category": "Potpie",
+        "icon": "$(clear-all)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "potpie.parseNewRepo",
+          "when": "view == potpie.repoTree",
+          "group": "navigation@1"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "potpie.removeProject",
+          "when": "view == potpie.repoTree && viewItem == potpie-project",
+          "group": "inline"
+        },
+        {
+          "command": "potpie.viewWiki",
+          "when": "view == potpie.repoTree && viewItem == potpie-project",
+          "group": "potpie@1"
+        },
+        {
+          "command": "potpie.generateWiki",
+          "when": "view == potpie.repoTree && viewItem == potpie-project",
+          "group": "potpie@2"
+        },
+        {
+          "command": "potpie.evaluateWiki",
+          "when": "view == potpie.repoTree && viewItem == potpie-project",
+          "group": "potpie@3"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Potpie",
+      "properties": {
+        "potpie.chat.historyLength": {
+          "type": "number",
+          "default": 5,
+          "minimum": 1,
+          "maximum": 50,
+          "description": "Number of conversation turns (user + assistant pairs) to include as context when sending a new chat message."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build -- --production",
+    "build": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "compile": "tsc -p ./ --noEmit",
+    "package": "vsce package --no-dependencies",
+    "lint": "eslint src --ext ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.90.0",
+    "@vscode/vsce": "^3.0.0",
+    "esbuild": "^0.20.0",
+    "marked": "^14.1.4",
+    "typescript": "^5.3.0"
+  }
+}

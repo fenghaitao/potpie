@@ -350,7 +350,7 @@ Generate the complete markdown content now.'''
             # Write page using write_wiki_page tool
             try:
                 from app.modules.intelligence.tools.wiki_tools.write_wiki_page_tool import _write_wiki_page
-                section = self._map_to_section(page.title)
+                section = self._to_filename(self._map_to_section(page.title))
                 result = _write_wiki_page(
                     section=section,
                     page_title=self._to_filename(page.title),
@@ -469,7 +469,11 @@ Generate the complete markdown content now.'''
 
     def _write_wiki_structure_xml(self, wiki_structure: WikiStructure) -> str:
         """Write wiki_structure.xml to .repowiki/ matching the deepwiki-open format."""
-        wiki_root = Path(".repowiki")
+        import os
+        env_dir = os.environ.get("POTPIE_WIKI_OUTPUT_DIR")
+        # POTPIE_WIKI_OUTPUT_DIR points to the content dir (en/content);
+        # wiki_structure.xml lives two levels up at the wiki root.
+        wiki_root = Path(env_dir).parent.parent if env_dir else Path(".repowiki")
         wiki_root.mkdir(parents=True, exist_ok=True)
 
         # Group page ids by their mapped section title (preserving insertion order)

@@ -6,6 +6,7 @@ Combines both graph construction and agent interactions in a single tool.
 """
 import asyncio
 import json
+import os
 import sys
 import subprocess
 import threading
@@ -871,7 +872,10 @@ async def _wiki(repo_name: str, branch: str, output_dir: Optional[str],
 @click.option('--project', '-p', help='Project ID (if already parsed)')
 @click.option('--concise', is_flag=True, help='Generate concise wiki (4-6 pages instead of 8-12)')
 @click.option('--readme', type=str, help='Path to README.md relative to repository root (e.g., "README.md" or "docs/README.md")')
-def deepwiki_open_wiki(repo: str, project: Optional[str], concise: bool, readme: Optional[str]):
+@click.option('--output-dir', '-o', type=click.Path(), default=None,
+              help='Directory to write wiki content files to (default: <repo>/.repowiki/en/content/). '
+                   'The directory is created automatically if it does not exist.')
+def deepwiki_open_wiki(repo: str, project: Optional[str], concise: bool, readme: Optional[str], output_dir: Optional[str]):
     """
     📚 Generate comprehensive wiki using deepwiki-open methodology.
 
@@ -884,15 +888,29 @@ def deepwiki_open_wiki(repo: str, project: Optional[str], concise: bool, readme:
         potpie-cli deepwiki-open-wiki -r ~/myproject --concise
         potpie-cli deepwiki-open-wiki -r . --readme README.md
     """
-    asyncio.run(_deepwiki_open_wiki(repo, project, concise, readme))
+    asyncio.run(_deepwiki_open_wiki(repo, project, concise, readme, output_dir))
 
 
-async def _deepwiki_open_wiki(repo_path: str, project_id: Optional[str], concise: bool, readme_path: Optional[str]):
+async def _deepwiki_open_wiki(repo_path: str, project_id: Optional[str], concise: bool, readme_path: Optional[str], output_dir: Optional[str] = None):
     """DeepWiki Open wiki generation implementation."""
     try:
         runtime = await ctx_obj.get_runtime()
         repo_path = str(Path(repo_path).expanduser().resolve())
         repo_name = Path(repo_path).name
+
+        # Set output directory env var so write_wiki_page_tool uses the right location
+        if output_dir:
+            resolved_output_dir = str(Path(output_dir).expanduser().resolve())
+            Path(resolved_output_dir).mkdir(parents=True, exist_ok=True)
+            os.environ["POTPIE_WIKI_OUTPUT_DIR"] = resolved_output_dir
+            console.print(f"[dim]Wiki output dir: {resolved_output_dir}[/dim]")
+        else:
+            # Default: use <repo>/.repowiki/en/content relative to the provided repo_path
+            default_output_dir = Path(repo_path) / ".repowiki" / "en" / "content"
+            resolved_output_dir = str(default_output_dir.expanduser().resolve())
+            Path(resolved_output_dir).mkdir(parents=True, exist_ok=True)
+            os.environ["POTPIE_WIKI_OUTPUT_DIR"] = resolved_output_dir
+            console.print(f"[dim]Wiki output dir (default): {resolved_output_dir}[/dim]")
 
         # Read README if provided
         readme_content = None
@@ -1065,18 +1083,34 @@ def projects():
 
 @projects.command(name="list")
 @click.option('--user-id', '-u', help='Filter by user ID')
-def list_projects_cmd(user_id: Optional[str]):
+@click.option('--json', 'output_json', is_flag=True, default=False,
+              help='Output as JSON array (machine-readable)')
+def list_projects_cmd(user_id: Optional[str], output_json: bool):
     """
     📁 List all registered projects.
     """
-    asyncio.run(_list_projects(user_id or ctx_obj.default_user_id))
+    asyncio.run(_list_projects(user_id or ctx_obj.default_user_id, output_json))
 
 
-async def _list_projects(user_id: str):
+async def _list_projects(user_id: str, output_json: bool = False):
     """List all projects."""
     try:
         runtime = await ctx_obj.get_runtime()
         projects = await runtime.projects.list(user_id=user_id)
+
+        if output_json:
+            import json as _json
+            console.print(_json.dumps([
+                {
+                    "id": p.id,
+                    "repo_name": p.repo_name,
+                    "branch_name": p.branch_name,
+                    "status": p.status.value,
+                    "repo_path": getattr(p, 'repo_path', '') or '',
+                }
+                for p in projects
+            ]))
+            return
 
         if not projects:
             console.print("[yellow]No projects found.[/yellow]")
