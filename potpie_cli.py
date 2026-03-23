@@ -1364,8 +1364,263 @@ def _get_last_project() -> Optional[str]:
 
 
 # ============================================================================
+# EVALUATE-WIKI COMMAND
+# ============================================================================
+
+@cli.command(name="evaluate-wiki")
+@click.option("--project", "-p", required=False, default=None,
+              help="Project ID whose code graph is used as ground truth")
+@click.option("--repo", "-r", default=None,
+              help="Repo name to auto-resolve project ID (alternative to --project)")
+@click.option("--wiki-dir", "-w", default=None,
+              help=(
+                  "Path to the wiki docs directory to evaluate. "
+                  "Accepts an absolute path, a relative path, or a bare folder name "
+                  "resolved against the current working directory. "
+                  "Auto-detects .repowiki/en/content/, .codewiki, .deepwiki-open when omitted."
+              ))
+@click.option("--reference-docs-dir", default=None,
+              help=(
+                  "Mode A: path to a reference/deepwiki markdown docs directory "
+                  "(e.g. exported via `deepwiki-export`). When provided, rubrics are "
+                  "generated from these docs via the CodeWikiBench pipeline and used "
+                  "directly — AI and graph rubric generation are skipped."
+              ))
+@click.option("--reference-docs-weight", type=float, default=1.0, show_default=True,
+              help="Weight for reference-docs rubrics (Mode A only).")
+@click.option("--ai-weight", type=float, default=0.4, show_default=True,
+              help="Weight for AI-generated rubrics in merge (Mode B only).")
+@click.option("--graph-weight", type=float, default=0.6, show_default=True,
+              help="Weight for graph-derived rubrics in merge (Mode B only).")
+@click.option("--context-window", type=int, default=None,
+              help=(
+                  "LLM context window in tokens (default: 120000). Controls wiki-content "
+                  "chunk size per LLM call and concurrent batch size. "
+                  "Use 128000 for GPT-4o/Claude Sonnet, 256000 for Gemini 1.5 Pro. "
+                  "Also settable via WIKI_CONTEXT_WINDOW env var."
+              ))
+@click.option("--output", "-o", default="wiki_eval_score.md",
+              show_default=True,
+              help="Output report path (.md or .json; both formats always written).")
+@click.option("--model", default=None,
+              help="LLM model for scoring (defaults to CHAT_MODEL env var).")
+@click.option("--user-id", default=None,
+              help="User ID owning the project (defaults to POTPIE_USER_ID or 'defaultuser').")
+def evaluate_wiki_cmd(
+    project: Optional[str],
+    repo: Optional[str],
+    wiki_dir: Optional[str],
+    reference_docs_dir: Optional[str],
+    reference_docs_weight: float,
+    ai_weight: float,
+    graph_weight: float,
+    context_window: Optional[int],
+    output: str,
+    model: Optional[str],
+    user_id: Optional[str],
+):
+    """
+    📊 Evaluate wiki documentation quality using the code knowledge graph.
+
+    Invokes the wiki-evaluator skill script directly (no ChatAgent roundtrip).
+
+    Runs in one of two mutually exclusive modes:
+
+    \b
+    Mode A  (--reference-docs-dir provided):
+      Parse reference docs → generate LLM rubrics → evaluate wiki against them.
+      AI and graph rubric steps are skipped.
+
+    \b
+    Mode B  (default, no --reference-docs-dir):
+      Generate AI rubrics from wiki + graph rubrics from code graph → merge → evaluate.
+
+    \b
+    Examples:
+        potpie-cli evaluate-wiki -p <project-id>
+        potpie-cli evaluate-wiki -p <project-id> --wiki-dir .codewiki
+        potpie-cli evaluate-wiki -p <project-id> --wiki-dir /path/to/wiki --output report.md
+        potpie-cli evaluate-wiki --repo myrepo --wiki-dir .codewiki
+        potpie-cli evaluate-wiki -p <id> --reference-docs-dir /path/to/ref-docs
+        potpie-cli evaluate-wiki -p <id> --context-window 256000
+    """
+    asyncio.run(_evaluate_wiki(
+        project, repo, wiki_dir, reference_docs_dir, reference_docs_weight,
+        ai_weight, graph_weight, context_window, output, model, user_id,
+    ))
+
+
+async def _evaluate_wiki(
+    project_id: Optional[str],
+    repo: Optional[str],
+    wiki_dir: Optional[str],
+    reference_docs_dir: Optional[str],
+    reference_docs_weight: float,
+    ai_weight: float,
+    graph_weight: float,
+    context_window: Optional[int],
+    output: str,
+    model: Optional[str],
+    user_id: Optional[str],
+):
+    """
+    Wiki evaluation implementation — invokes the wiki-evaluator skill script
+    directly via subprocess, using the potpie venv Python.
+
+    Mode A (reference_docs_dir provided): parse reference docs → LLM rubrics → evaluate.
+    Mode B (default): AI rubrics from wiki + graph rubrics from code graph → merge → evaluate.
+    """
+    import subprocess
+
+    _user_id = user_id or os.environ.get("POTPIE_USER_ID", "defaultuser")
+
+    # ── Resolve wiki directory for display ─────────────────────────────────
+    resolved_wiki_dir: Optional[Path] = None
+    if wiki_dir:
+        candidate = Path(wiki_dir)
+        if not candidate.is_absolute():
+            candidate = Path.cwd() / candidate
+        resolved_wiki_dir = candidate.resolve()
+        if not resolved_wiki_dir.exists():
+            console.print(
+                f"[bold red]Error:[/bold red] Wiki directory not found: {resolved_wiki_dir}"
+            )
+            raise click.Abort()
+    else:
+        auto_candidates = [
+            Path(".repowiki/en/content"),
+            Path(".codewiki"),
+            Path(".deepwiki-open"),
+            Path(".deepwiki"),
+        ]
+        for cand in auto_candidates:
+            if cand.exists():
+                resolved_wiki_dir = cand.resolve()
+                console.print(f"[dim]Auto-detected wiki directory: {resolved_wiki_dir}[/dim]")
+                break
+
+    md_count = len(list(resolved_wiki_dir.rglob("*.md"))) if resolved_wiki_dir else 0
+    wiki_display = str(resolved_wiki_dir) if resolved_wiki_dir else "(none found)"
+    proj_display = project_id or f"(resolve from repo={repo})"
+    mode_display = f"A — reference-docs  ({reference_docs_dir})" if reference_docs_dir else "B — AI + graph rubrics"
+
+    console.print(Panel.fit(
+        f"[bold cyan]Project:[/bold cyan]        {proj_display}\n"
+        f"[bold cyan]Wiki dir:[/bold cyan]       {wiki_display}\n"
+        f"[bold cyan]Wiki files:[/bold cyan]     {md_count} markdown file(s)\n"
+        f"[bold cyan]Mode:[/bold cyan]           {mode_display}\n"
+        f"[bold cyan]Context window:[/bold cyan] {context_window or 120000:,} tokens\n"
+        f"[bold cyan]Output:[/bold cyan]         {output}",
+        title="📊 Wiki Evaluation (skill)",
+        border_style="cyan",
+    ))
+
+    # ── Build skill script command ──────────────────────────────────────────
+    repo_root = Path(__file__).parent.resolve()
+    skill_script = repo_root / ".kiro/skills/wiki-evaluator/scripts/evaluate_wiki.py"
+    venv_python = repo_root / ".venv/bin/python"
+
+    python_exe = str(venv_python) if venv_python.exists() else sys.executable
+
+    cmd = [python_exe, str(skill_script)]
+
+    if project_id:
+        cmd += ["--project-id", project_id]
+    elif repo:
+        cmd += ["--repo", repo]
+    else:
+        console.print("[bold red]Error:[/bold red] Provide --project or --repo")
+        raise click.Abort()
+
+    if resolved_wiki_dir:
+        cmd += ["--wiki-dir", str(resolved_wiki_dir)]
+    if reference_docs_dir:
+        cmd += ["--reference-docs-dir", reference_docs_dir]
+        cmd += ["--reference-docs-weight", str(reference_docs_weight)]
+    else:
+        cmd += ["--ai-weight", str(ai_weight)]
+        cmd += ["--graph-weight", str(graph_weight)]
+    if context_window:
+        cmd += ["--context-window", str(context_window)]
+    if output:
+        cmd += ["--output", output]
+    if model:
+        cmd += ["--model", model]
+    cmd += ["--user-id", _user_id]
+
+    console.print(f"\n[bold green]🚀 Running wiki-evaluator skill...[/bold green]")
+    console.print(f"[dim]{' '.join(cmd)}[/dim]\n")
+
+    try:
+        proc = subprocess.run(cmd, cwd=str(repo_root))
+        exit_code = proc.returncode
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Interrupted.[/yellow]")
+        raise click.Abort()
+    except Exception as exc:
+        console.print(f"[bold red]Error running skill script:[/bold red] {exc}")
+        raise click.Abort()
+
+    # ── Pretty-print report ─────────────────────────────────────────────────
+    import json as _json
+
+    # Try both .json and .md variants of the output path
+    report_json = Path(output) if output.endswith(".json") else Path(output).with_suffix(".json")
+
+    if report_json.exists():
+        try:
+            report = _json.loads(report_json.read_text())
+
+            overall_pct = report.get("overall_pct", f"{report.get('overall_score', 0) * 100:.1f}%")
+            met = report.get("met_criteria", "?")
+            total = report.get("total_criteria", "?")
+
+            table = Table(
+                title="📊 Evaluation Results",
+                show_header=True,
+                header_style="bold magenta",
+            )
+            table.add_column("Category", style="cyan")
+            table.add_column("Score", style="green", justify="right")
+            table.add_column("Met/Total", style="blue", justify="right")
+
+            for cat, data in report.get("category_scores", {}).items():
+                if isinstance(data, dict):
+                    score = data.get("score", 0)
+                    c_met = data.get("met", "?")
+                    c_total = data.get("total", "?")
+                else:
+                    score = float(data)
+                    c_met = "?"
+                    c_total = "?"
+                pct = f"{score * 100:.1f}%"
+                status = "✅" if score >= 0.7 else "❌"
+                table.add_row(f"{status} {cat}", pct, f"{c_met}/{c_total}")
+
+            console.print(table)
+
+            color = (
+                "green" if float(report.get("overall_score", 0)) >= 0.7
+                else "yellow" if float(report.get("overall_score", 0)) >= 0.4
+                else "red"
+            )
+            console.print(
+                f"\n[bold]Overall score: [{color}]{overall_pct}[/{color}]"
+                f"  ({met}/{total} criteria met)[/bold]"
+            )
+            console.print(f"\n[dim]Full report: {report_json.resolve()}[/dim]")
+        except Exception as exc:
+            console.print(f"[yellow]Report at {report_json} could not be parsed for display: {exc}[/yellow]")
+    else:
+        if exit_code != 0:
+            console.print(f"[bold red]Skill script exited with code {exit_code}.[/bold red]")
+            raise click.Abort()
+
+
+# ============================================================================
 # EVAL COMMAND
 # ============================================================================
+
 
 @cli.command()
 @click.option("--prompt", default="evaluation/qna/prompt.txt", show_default=True,

@@ -74,6 +74,20 @@ jobs:
           PYTHONDONTWRITEBYTECODE: "1"
           ENABLE_MULTI_AGENT: "false"
 
+      - name: Run wiki-evaluator skill unit tests
+        # Runs the skill's own test suite in isolation (no DB / Redis needed).
+        # Uses --noconftest to skip the root conftest.py that requires live services.
+        run: |
+          uv run pytest tests/unit-tests/wiki-evaluator/ \
+            -m "not integration" \
+            -v \
+            --tb=short \
+            --noconftest \
+            --junitxml=test-results/junit-wiki-evaluator.xml
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+          ENABLE_MULTI_AGENT: "false"
+
       # - name: Upload test results
       #   if: always()
       #   uses: actions/upload-artifact@v4

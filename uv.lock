@@ -3689,6 +3689,7 @@ dependencies = [
     { name = "pyasn1" },
     { name = "pydantic", extra = ["email"] },
     { name = "pydantic-ai" },
+    { name = "pydantic-ai-skills" },
     { name = "pydantic-ai-todo" },
     { name = "pygithub" },
     { name = "pygments" },
@@ -3779,6 +3780,7 @@ requires-dist = [
     { name = "pyasn1", specifier = ">=0.6.2" },
     { name = "pydantic", extras = ["email"], specifier = ">=2.12.4" },
     { name = "pydantic-ai", specifier = ">=1.56.0" },
+    { name = "pydantic-ai-skills", specifier = ">=0.5.1" },
     { name = "pydantic-ai-todo", specifier = ">=0.1.6" },
     { name = "pygithub", specifier = ">=2.8.1" },
     { name = "pygments", specifier = ">=2.19.2" },
@@ -4201,6 +4203,20 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/15/13/f0a11d43e3e5b2705dd7ee687d4b0fa9b02a7cd23ea4170b92c0a79eb1d3/pydantic_ai-1.63.0.tar.gz", hash = "sha256:269665fbc947d1d4238296a697c12a60d8b1b2c82536f2af4be801f73e165a92", size = 12130, upload-time = "2026-02-23T17:56:34.489Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a6/4b/7cf9f5b2f8971a176be6ef218ffe6a30a5461bc2bfe914356881808ce159/pydantic_ai-1.63.0-py3-none-any.whl", hash = "sha256:586f63f391aa24e8b06bd0aeafbb1058de1d4f3bfe34c5f13d4f29a2d870afa5", size = 7229, upload-time = "2026-02-23T17:56:26.921Z" },
+]
+
+[[package]]
+name = "pydantic-ai-skills"
+version = "0.5.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio" },
+    { name = "pydantic-ai-slim" },
+    { name = "pyyaml" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/0a/e3/6069c92225b24cf97a5128e308dc32056c0ea016d16034e06f2c578e1fe3/pydantic_ai_skills-0.5.1.tar.gz", hash = "sha256:2375783fcf554581a9eeca834a4c44bfd503f7e8a67e58b771556e0ba61892cb", size = 9071286, upload-time = "2026-03-06T00:09:52.305Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a9/22/dc2a13f1525c69460033811f48dafe2c26c6ec4606116ce085d671ae5666/pydantic_ai_skills-0.5.1-py3-none-any.whl", hash = "sha256:386fded552d646bf02af0550c0bc8ed8c1e3f0a24a532219c0e2232e78b4746c", size = 47942, upload-time = "2026-03-06T00:09:50.217Z" },
 ]
 
 [[package]]
