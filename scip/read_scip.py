@@ -47,17 +47,18 @@ class SymbolLocation:
     absent or single-line, ``end_line`` equals ``line``.
     """
     symbol: str
+    symbol_base: list[str]
     line: int
     end_line: int = -1
+    is_def: bool = False
     text: str = ""
 
 
 @dataclass
 class DocumentRecord:
-    """All definitions and references found in a single source file."""
+    """All occurrences found in a single source file."""
     relative_path: str
-    definitions: List[SymbolLocation] = field(default_factory=list)
-    references: List[SymbolLocation] = field(default_factory=list)
+    occurrences: List[SymbolLocation] = field(default_factory=list)  # all occurrences, defs and refs
 
 
 # ── helpers ──────────────────────────────────────────────────────────
@@ -115,6 +116,13 @@ def build_document_records(index: scip_pb2.Index) -> Dict[str, DocumentRecord]:
 
     for doc in index.documents:
         record = DocumentRecord(relative_path=doc.relative_path)
+
+        _extends = {}
+        for sym in doc.symbols:
+            for rel in sym.relationships:
+                if rel.is_implementation:
+                    _extends.setdefault(sym.symbol, []).append(rel.symbol)
+
         for occ in doc.occurrences:
             start_line = occ.range[0] if occ.range else 0
             # For definitions, prefer enclosing_range (full AST extent
@@ -123,15 +131,15 @@ def build_document_records(index: scip_pb2.Index) -> Dict[str, DocumentRecord]:
                 end_line = _end_line_from_range(occ.enclosing_range)
             else:
                 end_line = _end_line_from_range(occ.range)
+
             loc = SymbolLocation(
                 symbol=occ.symbol,
+                symbol_base=_extends.get(occ.symbol, []),
                 line=start_line,
                 end_line=end_line,
+                is_def=bool(occ.symbol_roles & ROLE_DEFINITION),
             )
-            if occ.symbol_roles & ROLE_DEFINITION:
-                record.definitions.append(loc)
-            else:
-                record.references.append(loc)
+            record.occurrences.append(loc)
         records[doc.relative_path] = record
 
     return records

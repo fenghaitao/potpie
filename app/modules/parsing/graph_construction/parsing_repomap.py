@@ -1,5 +1,6 @@
 import math
 import os
+import shutil
 import subprocess
 import tempfile
 import warnings
@@ -47,10 +48,14 @@ except (
 ) as _exc:
     logger.info("SCIP integration unavailable (missing module): %s", _exc)
     _SCIP_AVAILABLE = False
+    scip_load_index = lambda *args, **kwargs: None
+    scip_build_document_records = lambda *args, **kwargs: None
+    scip_symbol_kind = lambda *args, **kwargs: None
+    scip_short_name = lambda *args, **kwargs: None
 
 # tree_sitter is throwing a FutureWarning
 warnings.simplefilter("ignore", category=FutureWarning)
-Tag = namedtuple("Tag", "rel_fname fname line end_line name ident kind type text".split())
+Tag = namedtuple("Tag", "rel_fname fname line end_line name ident kind type base text".split())
 
 # SCIP symbol-kind → Tag type mapping (used by _scip_tags_from_document)
 _SCIP_KIND_TO_TAG_TYPE = {
@@ -214,54 +219,37 @@ class RepoMap:
         code = self.io.read_text(fname) or ""
         file_lines = code.splitlines()
 
-        for defn in doc_record.definitions:
-            kind = scip_symbol_kind(defn.symbol)
+        for occ in doc_record.occurrences:
+            kind = scip_symbol_kind(occ.symbol)
             if kind == "parameter":
                 continue
             tag_type = _SCIP_KIND_TO_TAG_TYPE.get(kind, "unknown")
 
-            # Resolve full source text for this definition
             node_text = ""
-            end_line = defn.end_line if defn.end_line >= 0 else defn.line
-
-            if end_line >= defn.line and defn.line >= 0:
-                # enclosing_range gave us a multi-line extent — slice directly
-                node_text = "\n".join(file_lines[defn.line : end_line + 1])
-            else:
-                logger.error(
-                    "SCIP definition missing multi-line enclosing_range: "
-                    "symbol=%s line=%d end_line=%d file=%s",
-                    defn.symbol, defn.line, end_line, rel_fname,
-                )
-
+            end_line = occ.end_line if occ.end_line >= 0 else occ.line
+            if occ.is_def:
+                if end_line >= occ.line and occ.line >= 0:
+                    # enclosing_range gave us a multi-line extent — slice directly
+                    node_text = "\n".join(file_lines[occ.line : end_line + 1])
+                else:
+                    logger.error(
+                        "SCIP definition missing multi-line enclosing_range: "
+                        "symbol=%s line=%d end_line=%d file=%s",
+                        occ.symbol, occ.line, end_line, rel_fname,
+                    )
             yield Tag(
                 rel_fname=rel_fname,
                 fname=fname,
-                name=scip_short_name(defn.symbol),
-                ident=defn.symbol,
-                kind="def",
-                line=defn.line,
+                name=scip_short_name(occ.symbol),
+                ident=occ.symbol,
+                kind="def" if occ.is_def else "ref",
+                line=occ.line,
                 end_line=end_line,
+                base=occ.symbol_base,
                 type=tag_type,
                 text=node_text,
             )
 
-        for ref in doc_record.references:
-            kind = scip_symbol_kind(ref.symbol)
-            if kind == "parameter":
-                continue
-            tag_type = _SCIP_KIND_TO_TAG_TYPE.get(kind, "unknown")
-            yield Tag(
-                rel_fname=rel_fname,
-                fname=fname,
-                name=scip_short_name(ref.symbol),
-                ident=ref.symbol,
-                kind="ref",
-                line=ref.line,
-                end_line=ref.end_line if ref.end_line >= 0 else ref.line,
-                type=tag_type,
-                text="",
-            )
 
     def get_tags_raw(self, fname, rel_fname):
         lang = filename_to_lang(fname)
@@ -353,6 +341,7 @@ class RepoMap:
                 line=node.start_point[0],
                 end_line=tag_end_line,
                 type=type,
+                base=[],
                 text=text,
             )
 
@@ -380,6 +369,7 @@ class RepoMap:
                 kind="ref",
                 line=-1,
                 end_line=-1,
+                base=[],
                 type="unknown",
                 text="",
             )
@@ -462,6 +452,7 @@ class RepoMap:
                 line=node.start_point[0],
                 end_line=tag_end_line,
                 type=type,
+                base=[],
                 text=text,
             )
 
@@ -494,6 +485,7 @@ class RepoMap:
                 line=-1,
                 end_line=-1,
                 type="unknown",
+                base=[],
                 text="",
             )
 
@@ -783,6 +775,12 @@ class RepoMap:
             elif target_data.get("type") == "CLASS":
                 valid_direction = True
 
+        if relationship_type == "EXTENDS":
+            valid_direction = True
+
+        if relationship_type == "IMPORTS":
+            valid_direction = True
+
         if valid_direction:
             G.add_edge(source, target, type=relationship_type, **(extra_data or {}))
             seen_relationships.add(rel_key)
@@ -835,9 +833,22 @@ class RepoMap:
 
             project_name = os.path.basename(repo_dir) or "project"
             logger.info(f"Running scip-python index on {repo_dir}, output to {scip_output}")
+
+            # scip-python is a Node.js CLI (#!/usr/bin/env node).
+            # VSCode debugpy patches subprocess.Popen and intercepts any command
+            # whose executable path contains the substring "python", injecting
+            # pydevd.py as an argument before the real args.
+            # Invoking via `node <abs-path>` avoids the match because the
+            # executable seen by debugpy is "node", not "*python*".
+            scip_python_bin = shutil.which("scip-python") or "scip-python"
+            node_bin = shutil.which("node") or "node"
+            logger.debug(
+                f"Resolved scip-python: {scip_python_bin}, node: {node_bin}"
+            )
+
             result = subprocess.run(
                 [
-                    "scip-python", "index",
+                    node_bin, scip_python_bin, "index",
                     "--cwd", repo_dir,
                     "--project-name", project_name,
                     "--output", scip_output,
@@ -897,6 +908,7 @@ class RepoMap:
         G = nx.MultiDiGraph()
         defines = defaultdict(set)
         references = defaultdict(set)
+        extends = {}
         seen_relationships = set()
 
         # Load combined ignore patterns (.gitignore + .potpieignore)
@@ -1015,27 +1027,45 @@ class RepoMap:
                         )
 
                     current_class = None
+                    current_class_end_line = -1
+                    class_node_name = None
                     current_method = None
+                    current_method_end_line = -1
 
                     # Process all tags in file
                     for tag in tags:
+                        if current_class and tag.line > current_class_end_line:
+                            current_class = None
+                            current_class_end_line = -1
+
+                        if current_method and tag.line > current_method_end_line:
+                            current_method = None
+                            current_method_end_line = -1
+
                         if tag.kind == "def":
                             if tag.type == "class":
                                 node_type = "CLASS"
                                 current_class = tag.name
+                                current_class_end_line = tag.end_line
                                 current_method = None
                             elif tag.type == "interface":
                                 node_type = "INTERFACE"
                                 current_class = tag.name
+                                current_class_end_line = tag.end_line
                                 current_method = None
                             elif tag.type in ["method", "function"]:
                                 node_type = "FUNCTION"
                                 current_method = tag.name
+                                current_method_end_line = tag.end_line
                             else:
                                 continue
 
                             # Create fully qualified node name
-                            if current_class:
+                            # TODO: we don't handle nested classes or functions yet
+                            if node_type in ["CLASS", "INTERFACE"]:
+                                 node_name = f"{file_rel_path}:{tag.name}"
+                                 class_node_name = node_name
+                            elif current_class:
                                 node_name = f"{file_rel_path}:{current_class}.{tag.name}"
                             else:
                                 node_name = f"{file_rel_path}:{tag.name}"
@@ -1043,6 +1073,9 @@ class RepoMap:
                             # Source text is pre-computed by get_tags_raw /
                             # _scip_tags_from_document and stored in tag.text
                             node_text = tag.text
+
+                            if node_type == "CLASS" and tag.base:
+                                extends[node_name] = tag.base[:]
 
                             # Add node
                             if not G.has_node(node_name):
@@ -1068,10 +1101,22 @@ class RepoMap:
                                     )
                                     seen_relationships.add(rel_key)
 
+                                if current_class and node_type == "FUNCTION":
+                                    # Add CONTAINS relationship from class to method
+                                    rel_key = (class_node_name, node_name, "CONTAINS")
+                                    if rel_key not in seen_relationships:
+                                        G.add_edge(
+                                            class_node_name,
+                                            node_name,
+                                            type="CONTAINS",
+                                            ident=tag.name,
+                                        )
+                                        seen_relationships.add(rel_key)
+
                             # Record definition — use tag.ident (full SCIP
                             # symbol for Python, short name for tree-sitter)
                             # so def→ref matching is compiler-accurate.
-                            defines[tag.ident].add(node_name)
+                            defines[tag.ident].add((node_name, file_node_name))
 
                         elif tag.kind == "ref":
                             # Handle references
@@ -1079,6 +1124,8 @@ class RepoMap:
                                 source = f"{file_rel_path}:{current_class}.{current_method}"
                             elif current_method:
                                 source = f"{file_rel_path}:{current_method}"
+                            elif current_class:
+                                source = f"{file_rel_path}:{current_class}"
                             else:
                                 source = file_rel_path
 
@@ -1087,20 +1134,44 @@ class RepoMap:
                                     source,
                                     tag.line,
                                     tag.end_line,
+                                    file_rel_path,
                                     current_class,
                                     current_method,
                                 )
                             )
 
+        _extends = set()
+
+        for node_name, base_indents in extends.items():
+            for indent in base_indents:
+                target_nodes = defines.get(indent, set())
+                for target, _ in target_nodes:
+                    if node_name == target:
+                        continue
+
+                    if G.has_node(node_name) and G.has_node(target):
+                        RepoMap.create_relationship(
+                            G,
+                            node_name,
+                            target,
+                            "EXTENDS",
+                            seen_relationships,
+                            {
+                                "indent": indent,
+                            }
+                        )
+                        _extends.add((node_name, target))
+
+
         for ident, refs in references.items():
             target_nodes = defines.get(ident, set())
 
-            for source, line, end_line, src_class, src_method in refs:
-                for target in target_nodes:
+            for source, line, end_line, src_file, src_class, src_method in refs:
+                for target, target_file_node_name in target_nodes:
                     if source == target:
                         continue
 
-                    if G.has_node(source) and G.has_node(target):
+                    if G.has_node(source) and G.has_node(target) and not (source, target) in _extends:
                         RepoMap.create_relationship(
                             G,
                             source,
@@ -1113,6 +1184,23 @@ class RepoMap:
                                 "end_ref_line": end_line,
                             },
                         )
+
+                    if src_file != target_file_node_name and G.has_node(src_file) and G.has_node(target_file_node_name):
+                        # Add IMPORTS relationship from source file to target file
+                        RepoMap.create_relationship(
+                            G,
+                            src_file,
+                            target_file_node_name,
+                            "IMPORTS",
+                            seen_relationships,
+                            {
+                                "ident": ident,
+                                "ref_line": line,
+                                "end_ref_line": end_line,
+                            },
+                        )
+
+
 
         return G
 
