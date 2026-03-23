@@ -7,8 +7,11 @@ Combines both graph construction and agent interactions in a single tool.
 import asyncio
 import json
 import sys
+import subprocess
+import threading
+from collections.abc import Callable
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 # Load .env file before importing potpie
 from dotenv import load_dotenv
@@ -26,6 +29,163 @@ from potpie.agents.context import ChatContext
 from potpie.types import ProjectStatus
 
 console = Console()
+
+
+def _verbose_skill_stream_callback() -> Callable[[str], None]:
+    """Line writer for StreamingLocalSkillScriptExecutor (subprocess reader threads).
+
+    Avoids Rich and the asyncio loop: Rich Console is not thread-safe, and
+    marshaling with call_soon_threadsafe can stall if the loop does not get
+    enough turns while a tool is blocked in asyncio.to_thread.
+    """
+    lock = threading.Lock()
+
+    def write_line(line: str) -> None:
+        with lock:
+            sys.stdout.write(line + "\n")
+            sys.stdout.flush()
+
+    return write_line
+
+
+# ============================================================================
+# STREAMING EXECUTOR
+# ============================================================================
+
+from pydantic_ai_skills.local import LocalSkillScriptExecutor  # noqa: E402
+from pydantic_ai_skills.exceptions import SkillScriptExecutionError  # noqa: E402
+
+
+class StreamingLocalSkillScriptExecutor(LocalSkillScriptExecutor):
+    """Subclass of LocalSkillScriptExecutor that streams output line-by-line via a callback."""
+
+    def __init__(
+        self,
+        callback: Callable[[str], None],
+        python_executable: str | Path | None = None,
+        timeout: int = 30,
+    ) -> None:
+        super().__init__(python_executable=python_executable, timeout=timeout)
+        self._callback = callback
+
+    async def run(self, script, args: dict[str, Any] | None = None) -> Any:
+        if script.uri is None:
+            raise SkillScriptExecutionError(f"Script '{script.name}' has no URI for subprocess execution")
+
+        script_path = Path(script.uri)
+        cmd = [self._python_executable, "-u", str(script_path)]
+
+        if args:
+            for key, value in args.items():
+                if isinstance(value, bool):
+                    if value:
+                        cmd.append(f'--{key}')
+                elif isinstance(value, list):
+                    for item in value:
+                        cmd.append(f'--{key}')
+                        cmd.append(str(item))
+                elif value is not None:
+                    cmd.append(f'--{key}')
+                    cmd.append(str(value))
+
+        cwd = str(script_path.parent)
+        lines: list[str] = []
+        callback = self._callback
+
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=cwd,
+                universal_newlines=True,  # text mode: \r treated as line ending
+                encoding='utf-8',
+                errors='replace',
+            )
+        except OSError as exc:
+            raise SkillScriptExecutionError(
+                f"Failed to launch script '{script.name}' with python executable '{self._python_executable}'"
+            ) from exc
+
+        def _run_with_streaming(proc) -> int:
+            """Run subprocess in a thread, streaming output via callback."""
+            import threading
+
+            # Synchronize access to shared `lines` across threads.
+            lock = threading.Lock()
+
+            def _read_stdout(stream):
+                for line in iter(stream.readline, ''):
+                    line = line.rstrip('\r\n')
+                    if line.strip():
+                        # Protect only the shared `lines` list with the lock.
+                        with lock:
+                            lines.append(line)
+                        # Invoke the callback outside the critical section to avoid blocking both readers.
+                        callback(line)
+
+            def _read_stderr(stream):
+                for line in iter(stream.readline, ''):
+                    line = line.rstrip('\r\n')
+                    if line.strip():
+                        msg = "[stderr] " + line
+                        # Protect only the shared `lines` list with the lock.
+                        with lock:
+                            lines.append(msg)
+                        # Invoke the callback outside the critical section to avoid blocking both readers.
+                        callback(msg)
+
+            t_out = threading.Thread(target=_read_stdout, args=(proc.stdout,))
+            t_err = threading.Thread(target=_read_stderr, args=(proc.stderr,))
+            t_out.start()
+            t_err.start()
+            t_out.join()
+            t_err.join()
+            proc.wait()
+            return proc.returncode
+
+        try:
+            returncode = await asyncio.wait_for(
+                asyncio.to_thread(_run_with_streaming, proc),
+                timeout=self.timeout,
+            )
+        except asyncio.TimeoutError:
+            # On timeout, ensure the subprocess is terminated and reaped,
+            # and that its pipes are closed so background reader threads exit.
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                # Process may already have exited between timeout and kill.
+                pass
+
+            # Wait for the process to terminate and be reaped in a thread,
+            # so we don't block the event loop.
+            try:
+                await asyncio.to_thread(proc.wait)
+            except Exception:
+                # Best-effort cleanup; don't mask the original timeout.
+                pass
+
+            # Close pipes so reader threads see EOF and can exit.
+            for stream in (proc.stdout, proc.stderr):
+                try:
+                    if stream is not None and not stream.closed:
+                        stream.close()
+                except Exception:
+                    # Ignore errors during cleanup.
+                    pass
+            raise SkillScriptExecutionError(
+                f"Script '{script.name}' timed out after {self.timeout} seconds"
+            )
+        except OSError as e:
+            raise SkillScriptExecutionError(f"Failed to execute script '{script.name}': {e}") from e
+
+        output = "\n".join(lines)
+
+        if returncode != 0:
+            output += f"\n\nScript exited with code {returncode}"
+
+        return output.strip() or "(no output)"
 
 
 # ============================================================================
@@ -667,7 +827,13 @@ async def _wiki(repo_name: str, branch: str, output_dir: Optional[str],
     model_name = os.environ.get("CHAT_MODEL", "github_copilot/gpt-4o")
     model = LiteLLMModel(model_name)
 
-    executor = LocalSkillScriptExecutor(timeout=timeout)
+    if verbose:
+        executor = StreamingLocalSkillScriptExecutor(
+            callback=_verbose_skill_stream_callback(),
+            timeout=timeout,
+        )
+    else:
+        executor = LocalSkillScriptExecutor(timeout=timeout)
     skills_dir_obj = SkillsDirectory(path=str(skills_path), script_executor=executor)
     skills_toolset = SkillsToolset(directories=[skills_dir_obj])
 
@@ -1219,7 +1385,8 @@ async def _eval(prompt_path: str, skills_dir: str, timeout: int = 600, verbose: 
     cases_abs = str(Path(__file__).parent / "evaluation/qna/qna_eval_dml_cases.yaml")
     user_prompt = user_prompt + (
         f"\n\nIMPORTANT: run_skill_script takes args as a dict, not a list."
-        f" Use: args={{'cases': '{cases_abs}', 'repo': 'device-modeling-language'}}"
+        f" Use: skill_name='potpie-evaluator', script_name='scripts/evaluate_qna.py',"
+        f" args={{'cases': '{cases_abs}', 'repo': 'device-modeling-language'}}"
     )
 
     # Resolve skills directory relative to repo root
@@ -1232,7 +1399,13 @@ async def _eval(prompt_path: str, skills_dir: str, timeout: int = 600, verbose: 
     from pydantic_ai_skills.local import LocalSkillScriptExecutor
     model = LiteLLMModel(model_name)
 
-    executor = LocalSkillScriptExecutor(timeout=timeout)
+    if verbose:
+        executor = StreamingLocalSkillScriptExecutor(
+            callback=_verbose_skill_stream_callback(),
+            timeout=timeout,
+        )
+    else:
+        executor = LocalSkillScriptExecutor(timeout=timeout)
     skills_dir_obj = SkillsDirectory(path=str(skills_path), script_executor=executor)
     skills_toolset = SkillsToolset(directories=[skills_dir_obj])
 
