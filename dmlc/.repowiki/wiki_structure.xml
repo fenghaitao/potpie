@@ -1,0 +1,219 @@
+<wiki_structure>
+  <title>Device Modeling Language (DML) Wiki</title>
+  <description>A comprehensive guide for understanding and using the Device Modeling Language (DML) framework.</description>
+  <sections>
+    <section id="section-1">
+      <title>Project Overview</title>
+      <pages>
+        <page_ref>page-1</page_ref>
+        <page_ref>page-3</page_ref>
+        <page_ref>page-5</page_ref>
+        <page_ref>page-9</page_ref>
+        <page_ref>page-10</page_ref>
+        <page_ref>page-12</page_ref>
+      </pages>
+      <subsections />
+    </section>
+    <section id="section-2">
+      <title>Core Architecture</title>
+      <pages>
+        <page_ref>page-2</page_ref>
+        <page_ref>page-6</page_ref>
+      </pages>
+      <subsections />
+    </section>
+    <section id="section-3">
+      <title>Data Management</title>
+      <pages>
+        <page_ref>page-4</page_ref>
+        <page_ref>page-7</page_ref>
+      </pages>
+      <subsections />
+    </section>
+    <section id="section-4">
+      <title>Deployment &amp; Operations</title>
+      <pages>
+        <page_ref>page-8</page_ref>
+      </pages>
+      <subsections />
+    </section>
+    <section id="section-5">
+      <title>API Reference</title>
+      <pages>
+        <page_ref>page-11</page_ref>
+      </pages>
+      <subsections />
+    </section>
+  </sections>
+  <pages>
+    <page id="page-1">
+      <title>Overview</title>
+      <description>An introduction to the Device Modeling Language (DML) framework and its applications.</description>
+      <importance>high</importance>
+      <relevant_files>
+        <file_path>.deepwiki/1_Overview.md</file_path>
+        <file_path>.deepwiki/2_Getting_Started.md</file_path>
+        <file_path>.deepwiki/Introduction_to_Device_Modeling_Language.md</file_path>
+      </relevant_files>
+      <related_pages>
+        <related>page-2</related>
+        <related>page-3</related>
+      </related_pages>
+      <parent_section>section-1</parent_section>
+    </page>
+    <page id="page-2">
+      <title>System Architecture</title>
+      <description>An overview of the design and architecture of the DML system.</description>
+      <importance>high</importance>
+      <relevant_files>
+        <file_path>.deepwiki/22_Compiler_Architecture.md</file_path>
+        <file_path>.deepwiki-open/Architecture_Overview.md</file_path>
+        <file_path>.deepwiki-open/Component_Relationships.md</file_path>
+      </relevant_files>
+      <related_pages>
+        <related>page-3</related>
+        <related>page-4</related>
+      </related_pages>
+      <parent_section>section-2</parent_section>
+    </page>
+    <page id="page-3">
+      <title>Core Features</title>
+      <description>A detailed explanation of the primary functionalities and features of the DML framework.</description>
+      <importance>high</importance>
+      <relevant_files>
+        <file_path>.deepwiki/6_DML_Language_Reference.md</file_path>
+        <file_path>.deepwiki/8_Syntax_and_Grammar.md</file_path>
+        <file_path>.deepwiki-open/Key_Features_of_DML.md</file_path>
+      </relevant_files>
+      <related_pages>
+        <related>page-1</related>
+        <related>page-5</related>
+      </related_pages>
+      <parent_section>section-1</parent_section>
+    </page>
+    <page id="page-4">
+      <title>Data Management and Flow</title>
+      <description>An exploration of how data is stored, processed, and managed in the DML framework.</description>
+      <importance>medium</importance>
+      <relevant_files>
+        <file_path>.deepwiki/19_Memory-Mapped_I_O.md</file_path>
+        <file_path>.deepwiki-open/Data_Flow_and_Processing.md</file_path>
+        <file_path>.lib/1.4/internal.dml</file_path>
+      </relevant_files>
+      <related_pages>
+        <related>page-2</related>
+      </related_pages>
+      <parent_section>section-3</parent_section>
+    </page>
+    <page id="page-5">
+      <title>Frontend Components</title>
+      <description>Details on any frontend elements or interfaces related to the DML framework, if applicable.</description>
+      <importance>low</importance>
+      <relevant_files>
+        <file_path>.syntaxes/Dml.tmlanguage</file_path>
+      </relevant_files>
+      <related_pages>
+        <related>page-6</related>
+      </related_pages>
+      <parent_section>section-1</parent_section>
+    </page>
+    <page id="page-6">
+      <title>Backend Systems</title>
+      <description>An overview of the backend server-side components and modules of the DML framework.</description>
+      <importance>medium</importance>
+      <relevant_files>
+        <file_path>.py/dml/</file_path>
+        <file_path>.deepwiki/23_Compilation_Pipeline.md</file_path>
+        <file_path>.deepwiki/27_C_Code_Generation_Backend.md</file_path>
+      </relevant_files>
+      <related_pages>
+        <related>page-7</related>
+      </related_pages>
+      <parent_section>section-2</parent_section>
+    </page>
+    <page id="page-7">
+      <title>Model Integration</title>
+      <description>Explains the integration of AI models and diagnostics with DML.</description>
+      <importance>high</importance>
+      <relevant_files>
+        <file_path>.deepwiki-open/Integration_with_AI_Models.md</file_path>
+        <file_path>.deepwiki-open/AI_Diagnostics_Integration.md</file_path>
+        <file_path>.repowiki/QUICKSTART_AI_DIAGNOSTICS.md</file_path>
+      </relevant_files>
+      <related_pages>
+        <related>page-8</related>
+      </related_pages>
+      <parent_section>section-3</parent_section>
+    </page>
+    <page id="page-8">
+      <title>Deployment and Infrastructure</title>
+      <description>Covers details on deployment instructions and infrastructure requirements for using DML.</description>
+      <importance>high</importance>
+      <relevant_files>
+        <file_path>.deepwiki-open/Deployment_Instructions.md</file_path>
+        <file_path>run_dmlc.sh</file_path>
+        <file_path>.deepwiki/3_Installation_and_Build.md</file_path>
+      </relevant_files>
+      <related_pages>
+        <related>page-7</related>
+      </related_pages>
+      <parent_section>section-4</parent_section>
+    </page>
+    <page id="page-9">
+      <title>Extensibility and Customization</title>
+      <description>Guidelines for extending and customizing the framework.</description>
+      <importance>medium</importance>
+      <relevant_files>
+        <file_path>.deepwiki/16_Utility_Templates.md</file_path>
+        <file_path>.deepwiki-open/Extensibility_and_Customization.md</file_path>
+        <file_path>generate_env.py</file_path>
+        <file_path>generate_parsetabs.py</file_path>
+      </relevant_files>
+      <related_pages>
+        <related>page-10</related>
+      </related_pages>
+      <parent_section>section-1</parent_section>
+    </page>
+    <page id="page-10">
+      <title>Development and Testing</title>
+      <description>Resources for contributing to the development and testing of the DML framework.</description>
+      <importance>medium</importance>
+      <relevant_files>
+        <file_path>.deepwiki/34_Development_Guide.md</file_path>
+        <file_path>.deepwiki/35_Testing_Framework.md</file_path>
+        <file_path>run_unit_tests.py</file_path>
+      </relevant_files>
+      <related_pages>
+        <related>page-9</related>
+      </related_pages>
+      <parent_section>section-1</parent_section>
+    </page>
+    <page id="page-11">
+      <title>API Reference</title>
+      <description>A detailed API reference for working with the DML framework.</description>
+      <importance>medium</importance>
+      <relevant_files>
+        <file_path>.deepwiki/40_API_Reference.md</file_path>
+        <file_path>include/simics/dmllib.h</file_path>
+      </relevant_files>
+      <related_pages>
+        <related>page-3</related>
+      </related_pages>
+      <parent_section>section-5</parent_section>
+    </page>
+    <page id="page-12">
+      <title>Release Notes and Compatibility</title>
+      <description>Details on breaking changes, compatibility, and release notes for different versions.</description>
+      <importance>medium</importance>
+      <relevant_files>
+        <file_path>.deepwiki/33_Breaking_Changes_and_Compatibility.md</file_path>
+        <file_path>RELEASENOTES.md</file_path>
+        <file_path>.deepwiki/36_Porting_from_DML_1.2_to_1.4.md</file_path>
+      </relevant_files>
+      <related_pages>
+        <related>page-10</related>
+      </related_pages>
+      <parent_section>section-1</parent_section>
+    </page>
+  </pages>
+</wiki_structure>
