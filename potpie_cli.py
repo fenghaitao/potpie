@@ -1364,10 +1364,10 @@ def _get_last_project() -> Optional[str]:
 
 
 # ============================================================================
-# EVALUATE-WIKI COMMAND
+# EVAL-WIKI COMMAND
 # ============================================================================
 
-@cli.command(name="evaluate-wiki")
+@cli.command(name="eval-wiki")
 @click.option("--project", "-p", required=False, default=None,
               help="Project ID whose code graph is used as ground truth")
 @click.option("--repo", "-r", default=None,
@@ -1404,9 +1404,15 @@ def _get_last_project() -> Optional[str]:
               help="Output report path (.md or .json; both formats always written).")
 @click.option("--model", default=None,
               help="LLM model for scoring (defaults to CHAT_MODEL env var).")
+@click.option("--skills-dir", default=".kiro/skills", show_default=True,
+              help="Directory containing skill definitions.")
+@click.option("--timeout", "-t", default=1800, show_default=True, type=int,
+              help="Timeout in seconds for the skill script executor.")
+@click.option("--verbose", "-v", is_flag=True, default=False,
+              help="Show debug logging from the skill script.")
 @click.option("--user-id", default=None,
               help="User ID owning the project (defaults to POTPIE_USER_ID or 'defaultuser').")
-def evaluate_wiki_cmd(
+def eval_wiki_cmd(
     project: Optional[str],
     repo: Optional[str],
     wiki_dir: Optional[str],
@@ -1417,12 +1423,15 @@ def evaluate_wiki_cmd(
     context_window: Optional[int],
     output: str,
     model: Optional[str],
+    skills_dir: str,
+    timeout: int,
+    verbose: bool,
     user_id: Optional[str],
 ):
     """
     📊 Evaluate wiki documentation quality using the code knowledge graph.
 
-    Invokes the wiki-evaluator skill script directly (no ChatAgent roundtrip).
+    Invokes the wiki-evaluator skill via a pydantic-ai agent + SkillsToolset.
 
     Runs in one of two mutually exclusive modes:
 
@@ -1437,20 +1446,22 @@ def evaluate_wiki_cmd(
 
     \b
     Examples:
-        potpie-cli evaluate-wiki -p <project-id>
-        potpie-cli evaluate-wiki -p <project-id> --wiki-dir .codewiki
-        potpie-cli evaluate-wiki -p <project-id> --wiki-dir /path/to/wiki --output report.md
-        potpie-cli evaluate-wiki --repo myrepo --wiki-dir .codewiki
-        potpie-cli evaluate-wiki -p <id> --reference-docs-dir /path/to/ref-docs
-        potpie-cli evaluate-wiki -p <id> --context-window 256000
+        potpie-cli eval-wiki -p <project-id>
+        potpie-cli eval-wiki -p <project-id> --wiki-dir .codewiki
+        potpie-cli eval-wiki -p <project-id> --wiki-dir /path/to/wiki --output report.md
+        potpie-cli eval-wiki --repo myrepo --wiki-dir .codewiki
+        potpie-cli eval-wiki -p <id> --reference-docs-dir /path/to/ref-docs
+        potpie-cli eval-wiki -p <id> --context-window 256000
+        potpie-cli eval-wiki -p <id> --verbose
     """
-    asyncio.run(_evaluate_wiki(
+    asyncio.run(_eval_wiki(
         project, repo, wiki_dir, reference_docs_dir, reference_docs_weight,
-        ai_weight, graph_weight, context_window, output, model, user_id,
+        ai_weight, graph_weight, context_window, output, model,
+        skills_dir, timeout, verbose, user_id,
     ))
 
 
-async def _evaluate_wiki(
+async def _eval_wiki(
     project_id: Optional[str],
     repo: Optional[str],
     wiki_dir: Optional[str],
@@ -1461,20 +1472,37 @@ async def _evaluate_wiki(
     context_window: Optional[int],
     output: str,
     model: Optional[str],
+    skills_dir: str,
+    timeout: int,
+    verbose: bool,
     user_id: Optional[str],
 ):
     """
-    Wiki evaluation implementation — invokes the wiki-evaluator skill script
-    directly via subprocess, using the potpie venv Python.
+    Wiki evaluation implementation — drives the wiki-evaluator skill via a
+    pydantic-ai Agent + SkillsToolset (same pattern as `eval` and `wiki` commands).
 
     Mode A (reference_docs_dir provided): parse reference docs → LLM rubrics → evaluate.
     Mode B (default): AI rubrics from wiki + graph rubrics from code graph → merge → evaluate.
     """
-    import subprocess
+    import os as _os
+    from pydantic_ai import Agent, RunContext
+    from pydantic_ai_skills import SkillsToolset
+    from pydantic_ai_skills.directory import SkillsDirectory
+    from pydantic_ai_skills.local import LocalSkillScriptExecutor
+    from app.modules.intelligence.provider.litellm_model import LiteLLMModel
 
-    _user_id = user_id or os.environ.get("POTPIE_USER_ID", "defaultuser")
+    def dbg(msg: str) -> None:
+        if verbose:
+            console.print(f"[dim]{msg}[/dim]")
 
-    # ── Resolve wiki directory for display ─────────────────────────────────
+    _user_id = user_id or _os.environ.get("POTPIE_USER_ID", "defaultuser")
+
+    # ── Validate project / repo ─────────────────────────────────────────────
+    if not project_id and not repo:
+        console.print("[bold red]Error:[/bold red] Provide --project or --repo")
+        raise click.Abort()
+
+    # ── Resolve wiki directory ──────────────────────────────────────────────
     resolved_wiki_dir: Optional[Path] = None
     if wiki_dir:
         candidate = Path(wiki_dir)
@@ -1515,56 +1543,88 @@ async def _evaluate_wiki(
         border_style="cyan",
     ))
 
-    # ── Build skill script command ──────────────────────────────────────────
-    repo_root = Path(__file__).parent.resolve()
-    skill_script = repo_root / ".kiro/skills/wiki-evaluator/scripts/evaluate_wiki.py"
-    venv_python = repo_root / ".venv/bin/python"
-
-    python_exe = str(venv_python) if venv_python.exists() else sys.executable
-
-    cmd = [python_exe, str(skill_script)]
-
+    # ── Build skill script args dict ────────────────────────────────────────
+    script_args: dict = {}
     if project_id:
-        cmd += ["--project-id", project_id]
+        script_args["project-id"] = project_id
     elif repo:
-        cmd += ["--repo", repo]
-    else:
-        console.print("[bold red]Error:[/bold red] Provide --project or --repo")
-        raise click.Abort()
-
+        script_args["repo"] = repo
     if resolved_wiki_dir:
-        cmd += ["--wiki-dir", str(resolved_wiki_dir)]
+        script_args["wiki-dir"] = str(resolved_wiki_dir)
     if reference_docs_dir:
-        cmd += ["--reference-docs-dir", reference_docs_dir]
-        cmd += ["--reference-docs-weight", str(reference_docs_weight)]
+        script_args["reference-docs-dir"] = reference_docs_dir
+        script_args["reference-docs-weight"] = reference_docs_weight
     else:
-        cmd += ["--ai-weight", str(ai_weight)]
-        cmd += ["--graph-weight", str(graph_weight)]
+        script_args["ai-weight"] = ai_weight
+        script_args["graph-weight"] = graph_weight
     if context_window:
-        cmd += ["--context-window", str(context_window)]
+        script_args["context-window"] = context_window
     if output:
-        cmd += ["--output", output]
+        script_args["output"] = output
     if model:
-        cmd += ["--model", model]
-    cmd += ["--user-id", _user_id]
+        script_args["model"] = model
+    script_args["user-id"] = _user_id
 
-    console.print(f"\n[bold green]🚀 Running wiki-evaluator skill...[/bold green]")
-    console.print(f"[dim]{' '.join(cmd)}[/dim]\n")
+    # ── Build agent prompt ──────────────────────────────────────────────────
+    user_prompt = (
+        f"Evaluate the wiki documentation quality using the wiki-evaluator skill.\n"
+        f"Run the wiki-evaluator skill's evaluate_wiki script with these args:\n"
+        f"  {script_args}\n\n"
+        f"IMPORTANT: run_skill_script takes args as a dict, not a list.\n"
+        f" Use: skill_name='wiki-evaluator', script_name='scripts/evaluate_wiki.py',"
+        f" args={script_args}"
+    )
 
-    try:
-        proc = subprocess.run(cmd, cwd=str(repo_root))
-        exit_code = proc.returncode
-    except KeyboardInterrupt:
-        console.print("\n[yellow]Interrupted.[/yellow]")
-        raise click.Abort()
-    except Exception as exc:
-        console.print(f"[bold red]Error running skill script:[/bold red] {exc}")
-        raise click.Abort()
+    # ── Resolve skills directory ────────────────────────────────────────────
+    skills_path = Path(skills_dir)
+    if not skills_path.is_absolute():
+        skills_path = Path(__file__).parent / skills_path
 
-    # ── Pretty-print report ─────────────────────────────────────────────────
+    # ── Build model and executor ────────────────────────────────────────────
+    model_name = model or _os.environ.get("CHAT_MODEL", "github_copilot/gpt-4o")
+    litellm_model = LiteLLMModel(model_name)
+
+    if verbose:
+        executor = StreamingLocalSkillScriptExecutor(
+            callback=_verbose_skill_stream_callback(),
+            timeout=timeout,
+        )
+    else:
+        executor = LocalSkillScriptExecutor(timeout=timeout)
+
+    skills_dir_obj = SkillsDirectory(path=str(skills_path), script_executor=executor)
+    skills_toolset = SkillsToolset(directories=[skills_dir_obj])
+
+    agent = Agent(
+        model=litellm_model,
+        instructions="You are a wiki documentation quality evaluator.",
+        toolsets=[skills_toolset],
+    )
+
+    @agent.instructions
+    async def add_skills(ctx: RunContext) -> str | None:
+        return await skills_toolset.get_instructions(ctx)
+
+    console.print(f"\n[bold green]🚀 Running wiki-evaluator skill via agent...[/bold green]\n")
+    dbg(f"Prompt: {user_prompt}")
+
+    async with agent.iter(user_prompt) as agent_run:
+        dbg("Agent started, iterating nodes...")
+        async for node in agent_run:
+            dbg(f"Node: {type(node).__name__}")
+            if Agent.is_call_tools_node(node):
+                for part in node.model_response.parts:
+                    if hasattr(part, "tool_name"):
+                        console.print(f"\n[dim cyan]🔧 {part.tool_name}[/dim cyan]")
+                        if verbose and hasattr(part, "args"):
+                            dbg(f"  args: {part.args}")
+            elif Agent.is_end_node(node):
+                console.print(f"\n[bold green]✅ Done:[/bold green]\n")
+                console.print(Markdown(str(node.data.output)))
+
+    # ── Pretty-print report if the JSON output file was written ────────────
     import json as _json
 
-    # Try both .json and .md variants of the output path
     report_json = Path(output) if output.endswith(".json") else Path(output).with_suffix(".json")
 
     if report_json.exists():
@@ -1611,10 +1671,6 @@ async def _evaluate_wiki(
             console.print(f"\n[dim]Full report: {report_json.resolve()}[/dim]")
         except Exception as exc:
             console.print(f"[yellow]Report at {report_json} could not be parsed for display: {exc}[/yellow]")
-    else:
-        if exit_code != 0:
-            console.print(f"[bold red]Skill script exited with code {exit_code}.[/bold red]")
-            raise click.Abort()
 
 
 # ============================================================================

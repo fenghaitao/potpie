@@ -6,7 +6,7 @@ Covers:
   2. WikiEvaluator         — mocked LLM calls → aggregated scores (6-step pipeline)
   3. evaluate_wiki.py      — CLI entry point helpers (resolve_wiki_dir,
                              read_wiki_directory, generate_report)
-  4. potpie_cli.py         — evaluate-wiki CLI command (subprocess path)
+  4. potpie_cli.py         — eval-wiki CLI command (pydantic-ai Agent + SkillsToolset path)
 
 All external services, network calls, and database access are fully mocked —
 no live Copilot CLI, no DB, no Redis, no graph queries.
@@ -166,18 +166,19 @@ def mock_runtime() -> MagicMock:
     # tool_service for GraphRubricGenerator
     # Matches the interface used by GraphRubricGenerator._get_file_structure()
     # and ._ask_graph(): tool_service.file_structure_tool.arun(project_id)
-    # and tool_service.tools["ask_knowledge_graph_queries"].arun(queries, project_id, node_ids)
+    # and tool_service.tools["ask_knowledge_graph_queries"].arun({"queries":..., "project_id":..., "node_ids":...})
     tool_service = MagicMock()
 
     # file_structure_tool.arun(project_id) → CANNED_FILE_STRUCTURE
     tool_service.file_structure_tool = MagicMock()
     tool_service.file_structure_tool.arun = AsyncMock(return_value=CANNED_FILE_STRUCTURE)
 
-    # tools["ask_knowledge_graph_queries"].arun(queries, project_id, node_ids) → answer str
+    # tools["ask_knowledge_graph_queries"].arun({"queries": [...], "project_id": ..., "node_ids": [...]})
+    # BaseTool.arun takes a single tool_input dict — side_effect receives it as the first positional arg.
     kg_tool = MagicMock()
     kg_tool.arun = AsyncMock(
-        side_effect=lambda queries, project_id, node_ids=None: CANNED_GRAPH_ANSWERS.get(
-            queries[0], "No data available."
+        side_effect=lambda tool_input: CANNED_GRAPH_ANSWERS.get(
+            tool_input["queries"][0], "No data available."
         )
     )
     tool_service.tools = {"ask_knowledge_graph_queries": kg_tool}
@@ -854,16 +855,18 @@ class TestEvaluateWikiHelpers:
 
 
 # ===========================================================================
-# 4. potpie_cli.py evaluate-wiki command tests
+# 4. potpie_cli.py eval-wiki command tests
 # ===========================================================================
 
 
 class TestEvaluateWikiCLICommand:
     """
-    Tests for the potpie_cli.py evaluate-wiki command.
+    Tests for the potpie_cli.py eval-wiki command.
 
-    The command now invokes a subprocess (the skill script).  We mock
-    ``subprocess.run`` to avoid any actual execution.
+    The command now drives the wiki-evaluator skill via a pydantic-ai Agent +
+    SkillsToolset (same pattern as the `eval` and `wiki` commands).  We mock
+    the Agent.iter async context manager to avoid any real LLM or subprocess
+    execution.
 
     IMPORTANT: potpie_cli.py imports ``from potpie import PotpieRuntime`` at
     module level.  To avoid corrupting sys.modules for other test files
@@ -878,16 +881,54 @@ class TestEvaluateWikiCLICommand:
     _STUB_NAMES = [
         "potpie", "potpie.runtime", "potpie.agents", "potpie.agents.context",
         "potpie.types", "potpie.core", "potpie.core.database", "potpie.config",
+        "pydantic_ai", "pydantic_ai_skills", "pydantic_ai_skills.directory",
+        "pydantic_ai_skills.local", "pydantic_ai_skills.exceptions",
+        "app", "app.modules", "app.modules.intelligence",
+        "app.modules.intelligence.provider",
+        "app.modules.intelligence.provider.litellm_model",
         "potpie_cli",
     ]
 
     def _make_potpie_stubs(self) -> dict:
-        """Build potpie stub modules (does NOT register them yet)."""
+        """Build potpie + pydantic-ai stub modules (does NOT register them yet)."""
         def _make(name, **attrs):
             mod = types.ModuleType(name)
             for k, v in attrs.items():
                 setattr(mod, k, v)
             return mod
+
+        # Stub Agent: Agent(model, instructions, toolsets) → instance with .iter()
+        # and static helpers is_call_tools_node / is_end_node
+        mock_agent_instance = MagicMock()
+        mock_agent_instance.instructions = MagicMock(return_value=lambda f: f)
+
+        # iter() is an async context manager that yields no nodes
+        async def _empty_aiter():
+            return
+            yield  # make it an async generator
+
+        agent_iter_cm = MagicMock()
+        agent_iter_cm.__aenter__ = AsyncMock(return_value=agent_iter_cm)
+        agent_iter_cm.__aexit__ = AsyncMock(return_value=False)
+        agent_iter_cm.__aiter__ = lambda self: _empty_aiter()
+        mock_agent_instance.iter = MagicMock(return_value=agent_iter_cm)
+
+        MockAgent = MagicMock(return_value=mock_agent_instance)
+        MockAgent.is_call_tools_node = MagicMock(return_value=False)
+        MockAgent.is_end_node = MagicMock(return_value=False)
+
+        mock_skills_toolset = MagicMock()
+        mock_skills_toolset.get_instructions = AsyncMock(return_value=None)
+        MockSkillsToolset = MagicMock(return_value=mock_skills_toolset)
+
+        mock_skills_dir = MagicMock()
+        MockSkillsDirectory = MagicMock(return_value=mock_skills_dir)
+
+        mock_executor = MagicMock()
+        MockLocalExecutor = MagicMock(return_value=mock_executor)
+
+        mock_litellm = MagicMock()
+        MockLiteLLMModel = MagicMock(return_value=mock_litellm)
 
         return {
             "potpie": _make("potpie", PotpieRuntime=MagicMock(), __version__="0.0.0-test"),
@@ -900,17 +941,36 @@ class TestEvaluateWikiCLICommand:
             "potpie.core": _make("potpie.core"),
             "potpie.core.database": _make("potpie.core.database", DatabaseManager=MagicMock()),
             "potpie.config": _make("potpie.config", settings=MagicMock()),
+            "pydantic_ai": _make("pydantic_ai", Agent=MockAgent, RunContext=MagicMock()),
+            "pydantic_ai_skills": _make("pydantic_ai_skills", SkillsToolset=MockSkillsToolset),
+            "pydantic_ai_skills.directory": _make(
+                "pydantic_ai_skills.directory", SkillsDirectory=MockSkillsDirectory
+            ),
+            "pydantic_ai_skills.local": _make(
+                "pydantic_ai_skills.local", LocalSkillScriptExecutor=MockLocalExecutor
+            ),
+            "pydantic_ai_skills.exceptions": _make(
+                "pydantic_ai_skills.exceptions",
+                SkillScriptExecutionError=type("SkillScriptExecutionError", (Exception,), {}),
+            ),
+            "app": _make("app"),
+            "app.modules": _make("app.modules"),
+            "app.modules.intelligence": _make("app.modules.intelligence"),
+            "app.modules.intelligence.provider": _make("app.modules.intelligence.provider"),
+            "app.modules.intelligence.provider.litellm_model": _make(
+                "app.modules.intelligence.provider.litellm_model",
+                LiteLLMModel=MockLiteLLMModel,
+            ),
         }
 
     def _fresh_cli(self):
         """
-        Return a freshly imported potpie_cli module with potpie stubs in place.
-        Call this at the start of each test, before entering the save/restore context.
-        The cleanup_potpie_cli fixture handles restoration.
+        Return a freshly imported potpie_cli module with all stubs in place.
+        The cleanup_potpie_cli fixture handles sys.modules restoration.
         """
         import importlib
 
-        # Save and replace potpie* modules
+        # Save and replace modules
         self._saved_modules = {
             name: sys.modules.get(name) for name in self._STUB_NAMES
         }
@@ -925,18 +985,54 @@ class TestEvaluateWikiCLICommand:
         module = importlib.import_module("potpie_cli")
         return module
 
+    # ── shared helper: new parameter signature ────────────────────────────
+
+    @staticmethod
+    def _call_kwargs(
+        *,
+        project_id=PROJECT_ID,
+        repo=None,
+        wiki_dir=None,
+        reference_docs_dir=None,
+        reference_docs_weight=1.0,
+        ai_weight=0.4,
+        graph_weight=0.6,
+        context_window=None,
+        output="wiki_eval_score.md",
+        model=None,
+        skills_dir=".kiro/skills",
+        timeout=1800,
+        verbose=False,
+        user_id="testuser",
+    ) -> dict:
+        """Return a full kwargs dict for _eval_wiki matching its new signature."""
+        return dict(
+            project_id=project_id,
+            repo=repo,
+            wiki_dir=wiki_dir,
+            reference_docs_dir=reference_docs_dir,
+            reference_docs_weight=reference_docs_weight,
+            ai_weight=ai_weight,
+            graph_weight=graph_weight,
+            context_window=context_window,
+            output=output,
+            model=model,
+            skills_dir=skills_dir,
+            timeout=timeout,
+            verbose=verbose,
+            user_id=user_id,
+        )
+
     @pytest.fixture(autouse=True)
     def cleanup_potpie_cli(self):
         """Restore sys.modules after each test so other test files aren't affected."""
         self._saved_modules: dict = {}
         yield
-        # Restore all previously saved modules
         for name, original in self._saved_modules.items():
             if original is None:
                 sys.modules.pop(name, None)
             else:
                 sys.modules[name] = original
-        # Also remove freshly imported potpie_cli
         sys.modules.pop("potpie_cli", None)
 
     @pytest.fixture
@@ -958,208 +1054,151 @@ class TestEvaluateWikiCLICommand:
         }), encoding="utf-8")
         return report
 
-    @pytest.fixture
-    def mock_proc(self):
-        """Mock subprocess.run returning exit code 0."""
-        proc = MagicMock()
-        proc.returncode = 0
-        return proc
-
     @pytest.mark.asyncio
-    async def test_evaluate_wiki_calls_skill_script(self, tmp_path, mock_proc, fake_report, monkeypatch):
-        """_evaluate_wiki calls subprocess.run with the skill script path."""
+    async def test_eval_wiki_invokes_agent(self, tmp_path, fake_report, monkeypatch):
+        """_eval_wiki creates an Agent and calls agent.iter() with the skill prompt."""
         cli_module = self._fresh_cli()
-
         monkeypatch.chdir(tmp_path)
+
         wiki = tmp_path / ".codewiki"
         wiki.mkdir()
 
-        with patch("subprocess.run", return_value=mock_proc) as mock_run, \
-             patch.object(cli_module, "console", MagicMock()):
-
-            await cli_module._evaluate_wiki(
+        with patch.object(cli_module, "console", MagicMock()):
+            await cli_module._eval_wiki(**self._call_kwargs(
                 project_id=PROJECT_ID,
-                repo=None,
                 wiki_dir=str(wiki),
-                reference_docs_dir=None,
-                reference_docs_weight=0.3,
-                ai_weight=0.4,
-                graph_weight=0.6,
-                context_window=None,
                 output=str(fake_report.with_suffix(".md")),
-                model=None,
-                user_id="testuser",
-            )
+            ))
 
-        mock_run.assert_called_once()
-        cmd_args = mock_run.call_args[0][0]
-        assert any("evaluate_wiki.py" in str(a) for a in cmd_args), \
-            f"Expected skill script in cmd: {cmd_args}"
-        assert "--project-id" in cmd_args
-        assert PROJECT_ID in cmd_args
+        # Agent was constructed and .iter() was called
+        import pydantic_ai as _pai
+        _pai.Agent.assert_called_once()
+        _pai.Agent.return_value.iter.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_evaluate_wiki_passes_wiki_dir(self, tmp_path, mock_proc, fake_report, monkeypatch):
-        """_evaluate_wiki passes --wiki-dir to the skill script."""
+    async def test_eval_wiki_passes_project_id_in_prompt(self, tmp_path, fake_report, monkeypatch):
+        """_eval_wiki includes the project-id in the prompt passed to agent.iter()."""
         cli_module = self._fresh_cli()
-
         monkeypatch.chdir(tmp_path)
+
         wiki = tmp_path / ".codewiki"
         wiki.mkdir()
 
-        with patch("subprocess.run", return_value=mock_proc) as mock_run, \
-             patch.object(cli_module, "console", MagicMock()):
-
-            await cli_module._evaluate_wiki(
+        with patch.object(cli_module, "console", MagicMock()):
+            await cli_module._eval_wiki(**self._call_kwargs(
                 project_id=PROJECT_ID,
-                repo=None,
                 wiki_dir=str(wiki),
-                reference_docs_dir=None,
-                reference_docs_weight=0.3,
-                ai_weight=0.4,
-                graph_weight=0.6,
-                context_window=None,
                 output=str(fake_report.with_suffix(".md")),
-                model=None,
-                user_id="testuser",
-            )
+            ))
 
-        cmd_args = mock_run.call_args[0][0]
-        assert "--wiki-dir" in cmd_args
-        assert str(wiki.resolve()) in cmd_args
+        import pydantic_ai as _pai
+        prompt_arg = _pai.Agent.return_value.iter.call_args[0][0]
+        assert PROJECT_ID in prompt_arg
 
     @pytest.mark.asyncio
-    async def test_evaluate_wiki_passes_model(self, tmp_path, mock_proc, fake_report, monkeypatch):
-        """_evaluate_wiki forwards --model to skill script when provided."""
+    async def test_eval_wiki_passes_wiki_dir_in_prompt(self, tmp_path, fake_report, monkeypatch):
+        """_eval_wiki includes the resolved wiki-dir path in the prompt."""
         cli_module = self._fresh_cli()
-
         monkeypatch.chdir(tmp_path)
+
         wiki = tmp_path / ".codewiki"
         wiki.mkdir()
 
-        with patch("subprocess.run", return_value=mock_proc) as mock_run, \
-             patch.object(cli_module, "console", MagicMock()):
-
-            await cli_module._evaluate_wiki(
+        with patch.object(cli_module, "console", MagicMock()):
+            await cli_module._eval_wiki(**self._call_kwargs(
                 project_id=PROJECT_ID,
-                repo=None,
                 wiki_dir=str(wiki),
-                reference_docs_dir=None,
-                reference_docs_weight=0.3,
-                ai_weight=0.4,
-                graph_weight=0.6,
-                context_window=None,
+                output=str(fake_report.with_suffix(".md")),
+            ))
+
+        import pydantic_ai as _pai
+        prompt_arg = _pai.Agent.return_value.iter.call_args[0][0]
+        assert str(wiki.resolve()) in prompt_arg
+
+    @pytest.mark.asyncio
+    async def test_eval_wiki_passes_model_in_prompt(self, tmp_path, fake_report, monkeypatch):
+        """_eval_wiki includes the model name in the prompt when provided."""
+        cli_module = self._fresh_cli()
+        monkeypatch.chdir(tmp_path)
+
+        wiki = tmp_path / ".codewiki"
+        wiki.mkdir()
+
+        with patch.object(cli_module, "console", MagicMock()):
+            await cli_module._eval_wiki(**self._call_kwargs(
+                project_id=PROJECT_ID,
+                wiki_dir=str(wiki),
                 output=str(fake_report.with_suffix(".md")),
                 model="copilot_cli/gpt-4o",
-                user_id="testuser",
-            )
+            ))
 
-        cmd_args = mock_run.call_args[0][0]
-        assert "--model" in cmd_args
-        assert "copilot_cli/gpt-4o" in cmd_args
+        import pydantic_ai as _pai
+        prompt_arg = _pai.Agent.return_value.iter.call_args[0][0]
+        assert "copilot_cli/gpt-4o" in prompt_arg
 
     @pytest.mark.asyncio
-    async def test_evaluate_wiki_uses_repo_flag(self, tmp_path, mock_proc, fake_report, monkeypatch):
-        """_evaluate_wiki passes --repo instead of --project-id when repo given."""
+    async def test_eval_wiki_uses_repo_flag(self, tmp_path, fake_report, monkeypatch):
+        """_eval_wiki includes --repo value in the prompt instead of project-id."""
         cli_module = self._fresh_cli()
-
         monkeypatch.chdir(tmp_path)
 
-        with patch("subprocess.run", return_value=mock_proc) as mock_run, \
-             patch.object(cli_module, "console", MagicMock()):
-
-            await cli_module._evaluate_wiki(
+        with patch.object(cli_module, "console", MagicMock()):
+            await cli_module._eval_wiki(**self._call_kwargs(
                 project_id=None,
                 repo=REPO_NAME,
-                wiki_dir=None,
-                reference_docs_dir=None,
-                reference_docs_weight=0.3,
-                ai_weight=0.4,
-                graph_weight=0.6,
-                context_window=None,
                 output=str(fake_report.with_suffix(".md")),
-                model=None,
-                user_id="testuser",
-            )
+            ))
 
-        cmd_args = mock_run.call_args[0][0]
-        assert "--repo" in cmd_args
-        assert REPO_NAME in cmd_args
+        import pydantic_ai as _pai
+        prompt_arg = _pai.Agent.return_value.iter.call_args[0][0]
+        assert REPO_NAME in prompt_arg
 
     @pytest.mark.asyncio
-    async def test_evaluate_wiki_aborts_no_project_no_repo(self, tmp_path, monkeypatch):
-        """_evaluate_wiki raises click.Abort when neither --project nor --repo given."""
+    async def test_eval_wiki_aborts_no_project_no_repo(self, tmp_path, monkeypatch):
+        """_eval_wiki raises click.Abort when neither --project nor --repo given."""
         import click
         cli_module = self._fresh_cli()
-
         monkeypatch.chdir(tmp_path)
 
         with patch.object(cli_module, "console", MagicMock()):
             with pytest.raises(click.Abort):
-                await cli_module._evaluate_wiki(
+                await cli_module._eval_wiki(**self._call_kwargs(
                     project_id=None,
                     repo=None,
-                    wiki_dir=None,
-                    reference_docs_dir=None,
-                    reference_docs_weight=0.3,
-                    ai_weight=0.4,
-                    graph_weight=0.6,
-                    context_window=None,
                     output="output.md",
-                    model=None,
-                    user_id="testuser",
-                )
+                ))
 
     @pytest.mark.asyncio
-    async def test_evaluate_wiki_aborts_on_missing_wiki_dir(self, tmp_path, monkeypatch):
-        """_evaluate_wiki raises click.Abort when wiki-dir path does not exist."""
+    async def test_eval_wiki_aborts_on_missing_wiki_dir(self, tmp_path, monkeypatch):
+        """_eval_wiki raises click.Abort when the wiki-dir path does not exist."""
         import click
         cli_module = self._fresh_cli()
-
         monkeypatch.chdir(tmp_path)
 
         with patch.object(cli_module, "console", MagicMock()):
             with pytest.raises(click.Abort):
-                await cli_module._evaluate_wiki(
+                await cli_module._eval_wiki(**self._call_kwargs(
                     project_id=PROJECT_ID,
-                    repo=None,
                     wiki_dir="/nonexistent/path/to/wiki",
-                    reference_docs_dir=None,
-                    reference_docs_weight=0.3,
-                    ai_weight=0.4,
-                    graph_weight=0.6,
-                    context_window=None,
                     output="output.md",
-                    model=None,
-                    user_id="testuser",
-                )
+                ))
 
     @pytest.mark.asyncio
-    async def test_evaluate_wiki_reads_json_report(self, tmp_path, mock_proc, fake_report, monkeypatch):
-        """After skill runs, _evaluate_wiki reads and displays the JSON report."""
+    async def test_eval_wiki_reads_json_report(self, tmp_path, fake_report, monkeypatch):
+        """After the agent run, _eval_wiki reads and displays the JSON report."""
         cli_module = self._fresh_cli()
-
         monkeypatch.chdir(tmp_path)
+
         wiki = tmp_path / ".codewiki"
         wiki.mkdir()
 
         mock_console = MagicMock()
-        with patch("subprocess.run", return_value=mock_proc), \
-             patch.object(cli_module, "console", mock_console):
-
-            await cli_module._evaluate_wiki(
+        with patch.object(cli_module, "console", mock_console):
+            await cli_module._eval_wiki(**self._call_kwargs(
                 project_id=PROJECT_ID,
-                repo=None,
                 wiki_dir=str(wiki),
-                reference_docs_dir=None,
-                reference_docs_weight=1.0,
-                ai_weight=0.4,
-                graph_weight=0.6,
-                context_window=None,
                 output=str(fake_report.with_suffix(".md")),
-                model=None,
-                user_id="testuser",
-            )
+            ))
 
         assert mock_console.print.called
 

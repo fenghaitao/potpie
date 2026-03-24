@@ -70,8 +70,51 @@ def _run_workflow(potpie_cli_runner, workflow_dir: Path):
         md_files = list(wiki_dir.glob("**/*.md"))
         assert md_files, "At least one wiki Markdown file should be generated"
 
+        # Step 4: Download reference wiki docs from deepwiki.com
+        # deepwiki-export creates a subdirectory <username>/<reponame> inside
+        # the base dir, so the actual output lands at dml_dir/intel/device-modeling-language/
+        deepwiki_base_dir = dml_dir
+        deepwiki_dir = deepwiki_base_dir / "intel" / "device-modeling-language"
+        deepwiki_export_result = subprocess.run(
+            [
+                "deepwiki-export",
+                "https://deepwiki.com/intel/device-modeling-language",
+                "--output-base-dir", str(deepwiki_base_dir),
+            ],
+            capture_output=True,
+            text=True,
+            cwd=str(dml_dir),
+        )
+        assert deepwiki_export_result.returncode == 0, (
+            f"deepwiki-export failed (exit {deepwiki_export_result.returncode}):\n"
+            f"{deepwiki_export_result.stderr}"
+        )
+        assert deepwiki_dir.is_dir(), "deepwiki-export should create the output directory"
+        ref_md_files = list(deepwiki_dir.glob("**/*.md"))
+        assert ref_md_files, "deepwiki-export should produce at least one Markdown file"
+
+        # Step 5: Evaluate the wiki against the reference docs
+        eval_output = dml_dir / "wiki_eval_score.md"
+        eval_result = potpie_cli_runner(
+            "eval-wiki",
+            "--repo", project_name,
+            "--wiki-dir", str(wiki_dir),
+            "--reference-docs-dir", str(deepwiki_dir),
+            "--output", str(eval_output),
+            "--verbose",
+            cwd=str(workflow_dir),
+        )
+        assert eval_result.returncode == 0, (
+            f"eval-wiki failed (exit {eval_result.returncode}):\n{eval_result.stderr}"
+        )
+        eval_json = eval_output.with_suffix(".json")
+        assert eval_json.exists(), "eval-wiki should produce a JSON report"
+        import json as _json
+        report = _json.loads(eval_json.read_text())
+        assert "overall_score" in report, "JSON report should contain 'overall_score'"
+
     finally:
-        # Step 4: Cleanup
+        # Step 6: Cleanup
         if project_id:
             print(f"Cleaning up project {project_id}...")
             potpie_cli_runner("projects", "remove", project_id, "-f", check=False, cwd=workflow_dir)

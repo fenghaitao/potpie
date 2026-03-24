@@ -176,6 +176,7 @@ async def run_pipeline(
     reference_docs_dir: Optional[Path] = None,
     reference_docs_weight: float = 0.0,
     context_window: Optional[int] = None,
+    user_id: str = "defaultuser",
 ) -> Dict[str, Any]:
     """
     Run the complete wiki evaluation pipeline in one of two modes:
@@ -227,7 +228,8 @@ async def run_pipeline(
         if not _reference_rubrics_ok:
             print("[WARN] Reference rubrics are empty (LLM failure?) — falling back to Mode B")
             results = await _run_mode_b(
-                project_id, wiki_dir, wiki_content, model, ai_weight, graph_weight, context_window
+                project_id, wiki_dir, wiki_content, model, ai_weight, graph_weight, context_window,
+                user_id=user_id,
             )
             results["rubrics_sources"] = {
                 "reference_docs": False,
@@ -256,7 +258,8 @@ async def run_pipeline(
         print(f"[WARN] --reference-docs-dir not found: {reference_docs_dir} — falling back to Mode B")
         reference_rubrics = {"categories": []}
         results = await _run_mode_b(
-            project_id, wiki_dir, wiki_content, model, ai_weight, graph_weight, context_window
+            project_id, wiki_dir, wiki_content, model, ai_weight, graph_weight, context_window,
+            user_id=user_id,
         )
         results["rubrics_sources"] = {
             "reference_docs": False,
@@ -271,7 +274,8 @@ async def run_pipeline(
     else:
         print("\n[INFO] Mode B: Using AI rubrics + graph rubrics (no reference-docs-dir).")
         results = await _run_mode_b(
-            project_id, wiki_dir, wiki_content, model, ai_weight, graph_weight, context_window
+            project_id, wiki_dir, wiki_content, model, ai_weight, graph_weight, context_window,
+            user_id=user_id,
         )
         results["rubrics_sources"] = {
             "reference_docs": False,
@@ -299,6 +303,7 @@ async def _run_mode_b(
     ai_weight: float,
     graph_weight: float,
     context_window: Optional[int] = None,
+    user_id: str = "defaultuser",
 ) -> Dict[str, Any]:
     """
     Mode B: Generate graph rubrics via PotpieRuntime, then run WikiEvaluator
@@ -319,7 +324,7 @@ async def _run_mode_b(
         runtime = PotpieRuntime.from_env()
         await runtime.initialize()
         try:
-            gen = GraphRubricGenerator(runtime, project_id)
+            gen = GraphRubricGenerator(runtime, project_id, user_id=user_id)
             graph_rubrics = await gen.generate(model=model)
             n_cat = len(graph_rubrics.get("categories", []))
             n_crit = sum(len(c.get("criteria", [])) for c in graph_rubrics.get("categories", []))
@@ -506,6 +511,7 @@ def main():
             reference_docs_dir=reference_docs_dir,
             reference_docs_weight=args.reference_docs_weight,
             context_window=args.context_window,
+            user_id=args.user_id,
         )
     )
 

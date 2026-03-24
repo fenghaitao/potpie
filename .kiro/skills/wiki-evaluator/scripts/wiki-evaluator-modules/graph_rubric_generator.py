@@ -67,7 +67,7 @@ class GraphRubricGenerator:
         # rubrics = {"categories": [...]}
     """
 
-    def __init__(self, runtime, project_id: str):
+    def __init__(self, runtime, project_id: str, user_id: str = "defaultuser"):
         """
         Parameters
         ----------
@@ -75,9 +75,13 @@ class GraphRubricGenerator:
             An initialised ``PotpieRuntime`` instance.
         project_id:
             The potpie project ID whose graph to query.
+        user_id:
+            The user ID that owns the project (must match the owner used when
+            the project was registered, so that ProjectService lookups succeed).
         """
         self.runtime = runtime
         self.project_id = project_id
+        self.user_id = user_id
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -167,11 +171,11 @@ class GraphRubricGenerator:
                 print("[graph] ✗ direct tool call 'ask_knowledge_graph_queries': tool not found in registry")
                 return ""
             result = await asyncio.wait_for(
-                kg_tool.arun(
-                    queries=[query],
-                    project_id=self.project_id,
-                    node_ids=[],
-                ),
+                kg_tool.arun({
+                    "queries": [query],
+                    "project_id": self.project_id,
+                    "node_ids": [],
+                }),
                 timeout=60,
             )
             return str(result) if result else ""
@@ -202,12 +206,8 @@ class GraphRubricGenerator:
         # Retrieve a SQLAlchemy session from the DB manager
         session = db_manager.get_session()
 
-        # Resolve user_id from the runtime config (falls back to a safe default)
-        user_id = getattr(
-            getattr(self.runtime, "_config", None), "default_user_id", None
-        ) or "defaultuser"
-
-        return ToolService(session, user_id)
+        # Use the user_id passed at construction time (matches the project owner).
+        return ToolService(session, self.user_id)
 
     # ------------------------------------------------------------------
     # Step 2 — LLM rubric generation from graph context
