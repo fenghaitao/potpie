@@ -56,6 +56,8 @@ jobs:
           uv run python -V
           uv run pytest --version
 
+          cp .env.template .env
+
 
       - name: Run unit tests
         # Run only the unit-tests/ folder.
@@ -87,6 +89,15 @@ jobs:
         env:
           PYTHONDONTWRITEBYTECODE: "1"
           ENABLE_MULTI_AGENT: "false"
+
+      - name: Run integration tests
+        # Ideally we should run all tests under integration tests folder,
+        # currently only run the below test
+        run: |
+          uv run pytest tests/integration-tests/test_dmlc_wiki.py \
+            -v -s \
+            --tb=short \
+            --junitxml=test-results/junit-int.xml
 
       # - name: Upload test results
       #   if: always()

@@ -52,7 +52,7 @@ def pytest_configure(config):
     )
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="session")
 def require_github_tokens():
     """Skips 'github_live' tests if the GH_TOKEN_LIST environment variable is not set."""
     # This fixture runs for all sessions but only skips tests with the 'github_live' marker.
@@ -114,6 +114,24 @@ def db_session() -> Session:
     finally:
         session.close()
 
+@pytest.fixture(scope="session")
+def potpie_cli_runner():
+    """Provides a callable to run potpie_cli commands within tests."""
+    cli_script_path = Path(__file__).parent.parent / "potpie_cli.py"
+    def run_cli(*args, check=True, cwd=None):
+        import subprocess
+
+        cmd = [sys.executable, str(cli_script_path), *args]
+        print(f'Running CLI command: {" ".join(cmd)}  (cwd={cwd})')
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=check,
+            cwd=cwd,
+        )
+        return result
+    return run_cli
 
 @pytest_asyncio.fixture(scope="function")
 async def async_db_session() -> AsyncSession:
