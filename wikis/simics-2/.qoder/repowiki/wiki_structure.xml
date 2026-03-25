@@ -1,0 +1,200 @@
+<wiki_structure>
+  <title>Comprehensive Project Wiki</title>
+  <description>This wiki provides thorough documentation for the repository, covering all aspects of its design, implementation, and usage.</description>
+  <sections>
+    <section id="section-1">
+      <title>Project Overview</title>
+      <pages>
+        <page_ref>page-1</page_ref>
+        <page_ref>page-3</page_ref>
+        <page_ref>page-6</page_ref>
+        <page_ref>page-9</page_ref>
+        <page_ref>page-10</page_ref>
+        <page_ref>page-11</page_ref>
+      </pages>
+      <subsections />
+    </section>
+    <section id="section-2">
+      <title>Core Architecture</title>
+      <pages>
+        <page_ref>page-2</page_ref>
+        <page_ref>page-5</page_ref>
+      </pages>
+      <subsections />
+    </section>
+    <section id="section-3">
+      <title>Data Management</title>
+      <pages>
+        <page_ref>page-4</page_ref>
+        <page_ref>page-8</page_ref>
+      </pages>
+      <subsections />
+    </section>
+    <section id="section-4">
+      <title>Deployment &amp; Operations</title>
+      <pages>
+        <page_ref>page-7</page_ref>
+      </pages>
+      <subsections />
+    </section>
+  </sections>
+  <pages>
+    <page id="page-1">
+      <title>Overview</title>
+      <description>This page provides a general overview of the repository, its purpose, and its key components.</description>
+      <importance>high</importance>
+      <relevant_files>
+        <file_path>README.md</file_path>
+      </relevant_files>
+      <related_pages>
+        <related>page-2</related>
+        <related>page-3</related>
+      </related_pages>
+      <parent_section>section-1</parent_section>
+    </page>
+    <page id="page-2">
+      <title>System Architecture</title>
+      <description>This page outlines the overall system design, including the repository structure and key subsystems.</description>
+      <importance>high</importance>
+      <relevant_files>
+        <file_path>.github/</file_path>
+        <file_path>.jenkins/</file_path>
+        <file_path>scripts/setup_simics_workspace.py</file_path>
+      </relevant_files>
+      <related_pages>
+        <related>page-3</related>
+        <related>page-7</related>
+      </related_pages>
+      <parent_section>section-2</parent_section>
+    </page>
+    <page id="page-3">
+      <title>Core Features</title>
+      <description>This page describes the primary functionalities of the repository and its components.</description>
+      <importance>high</importance>
+      <relevant_files>
+        <file_path>skills/</file_path>
+        <file_path>agents/</file_path>
+        <file_path>cte_validaiton_repo/</file_path>
+      </relevant_files>
+      <related_pages>
+        <related>page-1</related>
+        <related>page-5</related>
+      </related_pages>
+      <parent_section>section-1</parent_section>
+    </page>
+    <page id="page-4">
+      <title>Data Management and Flow</title>
+      <description>This page explains how data is stored, processed, and managed across the system.</description>
+      <importance>medium</importance>
+      <relevant_files>
+        <file_path>scripts/mailbox_generation_scripts/</file_path>
+        <file_path>val_content/lib/</file_path>
+        <file_path>val_content/base_tests/</file_path>
+      </relevant_files>
+      <related_pages>
+        <related>page-2</related>
+        <related>page-7</related>
+      </related_pages>
+      <parent_section>section-3</parent_section>
+    </page>
+    <page id="page-5">
+      <title>Backend Systems</title>
+      <description>This page focuses on the backend components and their implementation details.</description>
+      <importance>high</importance>
+      <relevant_files>
+        <file_path>jira/</file_path>
+        <file_path>scripts/github_helper.py</file_path>
+        <file_path>cte_validaiton_repo/</file_path>
+      </relevant_files>
+      <related_pages>
+        <related>page-4</related>
+      </related_pages>
+      <parent_section>section-2</parent_section>
+    </page>
+    <page id="page-6">
+      <title>Extensibility and Customization</title>
+      <description>This page details how users can extend and customize the repository's functionality.</description>
+      <importance>medium</importance>
+      <relevant_files>
+        <file_path>scripts/docs/documentation.py</file_path>
+        <file_path>doc/Validation-Central/Tools/Tools.md</file_path>
+        <file_path>skills/</file_path>
+      </relevant_files>
+      <related_pages>
+        <related>page-3</related>
+        <related>page-9</related>
+      </related_pages>
+      <parent_section>section-1</parent_section>
+    </page>
+    <page id="page-7">
+      <title>Deployment and Infrastructure</title>
+      <description>This page provides details about the deployment processes and infrastructure setup.</description>
+      <importance>high</importance>
+      <relevant_files>
+        <file_path>.github/workflows/</file_path>
+        <file_path>.jenkins/</file_path>
+        <file_path>scripts/prepare.simics</file_path>
+      </relevant_files>
+      <related_pages>
+        <related>page-2</related>
+      </related_pages>
+      <parent_section>section-4</parent_section>
+    </page>
+    <page id="page-8">
+      <title>Model Integration</title>
+      <description>This page explains any AI or machine learning model integration aspects of the repository.</description>
+      <importance>low</importance>
+      <relevant_files>
+        <file_path>scripts/latency_analysis/metrics.cfg</file_path>
+        <file_path>simics_api/modules/five_framework/</file_path>
+        <file_path>ai_review.yml</file_path>
+      </relevant_files>
+      <related_pages>
+        <related>page-5</related>
+      </related_pages>
+      <parent_section>section-3</parent_section>
+    </page>
+    <page id="page-9">
+      <title>Testing and Validation</title>
+      <description>This page highlights the automated testing frameworks and validation processes used in the repository.</description>
+      <importance>medium</importance>
+      <relevant_files>
+        <file_path>scripts/run_unit_tests.py</file_path>
+        <file_path>unit_tests/</file_path>
+        <file_path>val_content/test/</file_path>
+      </relevant_files>
+      <related_pages>
+        <related>page-6</related>
+      </related_pages>
+      <parent_section>section-1</parent_section>
+    </page>
+    <page id="page-10">
+      <title>Developer Onboarding</title>
+      <description>This page provides helpful resources and guidelines for new developers getting started with the repository.</description>
+      <importance>medium</importance>
+      <relevant_files>
+        <file_path>doc/Getting-Started/Onboarding.md</file_path>
+        <file_path>doc/Getting-Started/Quick-Start.md</file_path>
+        <file_path>doc/Getting-Started/Environment-Setup.md</file_path>
+      </relevant_files>
+      <related_pages>
+        <related>page-1</related>
+      </related_pages>
+      <parent_section>section-1</parent_section>
+    </page>
+    <page id="page-11">
+      <title>Documentation and Coding Standards</title>
+      <description>This page focuses on the documentation and coding conventions for maintaining readable and consistent code.</description>
+      <importance>low</importance>
+      <relevant_files>
+        <file_path>README.md</file_path>
+        <file_path>pylintrc</file_path>
+        <file_path>doc/Getting-Started/Coding-Convention.md</file_path>
+      </relevant_files>
+      <related_pages>
+        <related>page-10</related>
+      </related_pages>
+      <parent_section>section-1</parent_section>
+    </page>
+  </pages>
+</wiki_structure>
