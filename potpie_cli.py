@@ -869,171 +869,133 @@ async def _wiki(repo_name: str, branch: str, output_dir: Optional[str],
 @cli.command()
 @click.option('--repo', '-r', required=True, type=click.Path(exists=True),
               help='Path to repository to generate wiki for')
-@click.option('--project', '-p', help='Project ID (if already parsed)')
+@click.option('--project', '-p', default=None, help='Project ID (if already parsed; auto-parses when omitted)')
 @click.option('--concise', is_flag=True, help='Generate concise wiki (4-6 pages instead of 8-12)')
-@click.option('--readme', type=str, help='Path to README.md relative to repository root (e.g., "README.md" or "docs/README.md")')
-@click.option('--output-dir', '-o', type=click.Path(), default=None,
-              help='Directory to write wiki content files to (default: <repo>/.repowiki/en/content/). '
-                   'The directory is created automatically if it does not exist.')
-def deepwiki_open_wiki(repo: str, project: Optional[str], concise: bool, readme: Optional[str], output_dir: Optional[str]):
+@click.option('--readme', type=str, default=None, help='Path to README.md relative to repository root (e.g., "README.md")')
+@click.option('--skills-dir', default='.kiro/skills', show_default=True,
+              help='Directory containing skill definitions')
+@click.option('--timeout', '-t', default=1800, show_default=True, type=int,
+              help='Timeout in seconds for the skill script executor')
+@click.option('--verbose', '-v', is_flag=True, default=False,
+              help='Show debug logging (node types, tool args, live script output)')
+def deepwiki_open_wiki(repo: str, project: Optional[str], concise: bool, readme: Optional[str],
+                       skills_dir: str, timeout: int, verbose: bool):
     """
     📚 Generate comprehensive wiki using deepwiki-open methodology.
 
-    This command uses the DeepWikiOpenAgent to generate structured wiki documentation
-    following the deepwiki-open workflow: analyze structure, plan pages, generate content.
+    Uses the deepwiki-open-wiki skill and DeepWikiOpenAgent to generate structured
+    wiki documentation following the deepwiki-open workflow: analyze structure,
+    plan pages, generate content.  Output is written to <repo>/.repowiki/en/content/.
 
     Examples:
         potpie-cli deepwiki-open-wiki --repo /path/to/repo
         potpie-cli deepwiki-open-wiki -r . -p <project-id>
         potpie-cli deepwiki-open-wiki -r ~/myproject --concise
-        potpie-cli deepwiki-open-wiki -r . --readme README.md
+        potpie-cli deepwiki-open-wiki -r . --readme README.md --verbose
     """
-    asyncio.run(_deepwiki_open_wiki(repo, project, concise, readme, output_dir))
+    asyncio.run(_deepwiki_open_wiki(repo, project, concise, readme, skills_dir, timeout, verbose))
 
 
-async def _deepwiki_open_wiki(repo_path: str, project_id: Optional[str], concise: bool, readme_path: Optional[str], output_dir: Optional[str] = None):
-    """DeepWiki Open wiki generation implementation."""
-    try:
-        runtime = await ctx_obj.get_runtime()
-        repo_path = str(Path(repo_path).expanduser().resolve())
-        repo_name = Path(repo_path).name
+async def _deepwiki_open_wiki(
+    repo_path: str,
+    project_id: Optional[str],
+    concise: bool,
+    readme_path: Optional[str],
+    skills_dir: str,
+    timeout: int,
+    verbose: bool,
+):
+    """DeepWiki Open wiki generation via the deepwiki-open-wiki skill."""
+    import os
+    from pydantic_ai import Agent, RunContext
+    from pydantic_ai_skills import SkillsToolset
+    from pydantic_ai_skills.directory import SkillsDirectory
+    from app.modules.intelligence.provider.litellm_model import LiteLLMModel
 
-        # Set output directory env var so write_wiki_page_tool uses the right location
-        if output_dir:
-            resolved_output_dir = str(Path(output_dir).expanduser().resolve())
-            Path(resolved_output_dir).mkdir(parents=True, exist_ok=True)
-            os.environ["POTPIE_WIKI_OUTPUT_DIR"] = resolved_output_dir
-            console.print(f"[dim]Wiki output dir: {resolved_output_dir}[/dim]")
-        else:
-            # Default: use <repo>/.repowiki/en/content relative to the provided repo_path
-            default_output_dir = Path(repo_path) / ".repowiki" / "en" / "content"
-            resolved_output_dir = str(default_output_dir.expanduser().resolve())
-            Path(resolved_output_dir).mkdir(parents=True, exist_ok=True)
-            os.environ["POTPIE_WIKI_OUTPUT_DIR"] = resolved_output_dir
-            console.print(f"[dim]Wiki output dir (default): {resolved_output_dir}[/dim]")
+    def dbg(msg):
+        if verbose:
+            console.print(f"[dim]{msg}[/dim]")
 
-        # Read README if provided
-        readme_content = None
-        if readme_path:
-            # Resolve relative to repo path
-            full_readme_path = Path(repo_path) / readme_path
-            try:
-                with open(full_readme_path, 'r', encoding='utf-8') as f:
-                    readme_content = f.read()
-                console.print(f"[green]✅ README loaded from {readme_path}[/green]")
-            except Exception as e:
-                console.print(f"[yellow]⚠️  Failed to read README at {readme_path}: {e}[/yellow]")
+    repo_path = str(Path(repo_path).expanduser().resolve())
+    repo_name = Path(repo_path).name
 
-        # If no project ID, try to parse the repo first
-        if not project_id:
-            console.print("[yellow]No project ID provided. Parsing repository first...[/yellow]")
+    skills_path = Path(skills_dir)
+    if not skills_path.is_absolute():
+        skills_path = Path(__file__).parent / skills_path
 
-            # Auto-detect branch
-            try:
-                from git import Repo as GitRepo
-                branch = GitRepo(repo_path).active_branch.name
-                commit_id = GitRepo(repo_path).head.commit.hexsha
-            except Exception:
-                branch = 'main'
-                commit_id = None
+    # Build args dict for the skill script
+    args_dict: dict = {"repo_path": repo_path}
+    if project_id:
+        args_dict["project_id"] = project_id
+    if concise:
+        args_dict["concise"] = True
+    if readme_path:
+        args_dict["readme"] = readme_path
 
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                console=console,
-            ) as progress:
-                task = progress.add_task("📝 Registering and parsing project...", total=None)
+    user_prompt = (
+        f"Generate {'concise' if concise else 'comprehensive'} wiki documentation "
+        f"for the repository '{repo_name}'.\n"
+        f"Use the deepwiki-open-wiki skill's generate_deepwiki script.\n"
+        f"IMPORTANT: run_skill_script takes args as a dict, not a list.\n"
+        f"Use: skill_name='deepwiki-open-wiki', "
+        f"script_name='scripts/generate_deepwiki.py', "
+        f"args={args_dict}"
+    )
 
-                project_id = await runtime.projects.register(
-                    repo_name=repo_name,
-                    branch_name=branch,
-                    user_id=ctx_obj.default_user_id,
-                    repo_path=repo_path,
-                    commit_id=commit_id,
-                )
+    output_dir = str(Path(repo_path) / ".repowiki" / "en" / "content")
 
-                result = await runtime.parsing.parse_project(
-                    project_id=project_id,
-                    user_id=ctx_obj.default_user_id,
-                    user_email=f"{ctx_obj.default_user_id}@cli.local",
-                    cleanup_graph=True,
-                    commit_id=commit_id,
-                )
+    console.print(Panel.fit(
+        f"[bold cyan]Repository:[/bold cyan]  {repo_name}\n"
+        f"[bold cyan]Path:[/bold cyan]        {repo_path}\n"
+        f"[bold cyan]Project ID:[/bold cyan]  {project_id or '(auto-detect)'}\n"
+        f"[bold cyan]Mode:[/bold cyan]        {'Concise (4-6 pages)' if concise else 'Comprehensive (8-12 pages)'}\n"
+        f"[bold cyan]README:[/bold cyan]      {'Provided' if readme_path else 'Not provided'}\n"
+        f"[bold cyan]Output:[/bold cyan]      {output_dir}",
+        title="📚 DeepWiki Open Generation",
+        border_style="cyan"
+    ))
 
-                progress.update(task, completed=True)
+    model_name = os.environ.get("CHAT_MODEL", "github_copilot/gpt-4o")
+    model = LiteLLMModel(model_name)
 
-            if not result.success:
-                console.print(f"[bold red]❌ Parsing failed:[/bold red] {result.error_message}")
-                raise click.Abort()
-
-            console.print(f"[bold green]✅ Project parsed successfully![/bold green] ID: {project_id}\n")
-
-        # Get agent
-        try:
-            agent = runtime.agents.deepwiki_open_agent
-        except AttributeError:
-            console.print("[red]deepwiki_open_agent not found. Make sure it is registered in agents_service.py.[/red]")
-            raise click.Abort()
-
-        project_info = await runtime.projects.get(project_id)
-
-        # Build query based on mode
-        mode = "concise" if concise else "comprehensive"
-        query = f"Generate {mode} wiki documentation for the entire repository following deepwiki-open methodology"
-
-        console.print(Panel.fit(
-            f"[bold cyan]Repository:[/bold cyan] {repo_name}\n"
-            f"[bold cyan]Path:[/bold cyan] {repo_path}\n"
-            f"[bold cyan]Project ID:[/bold cyan] {project_id}\n"
-            f"[bold cyan]Mode:[/bold cyan] {'Concise (4-6 pages)' if concise else 'Comprehensive (8-12 pages)'}\n"
-            f"[bold cyan]README:[/bold cyan] {'Provided' if readme_content else 'Not provided'}\n"
-            f"[bold cyan]Output:[/bold cyan] .repowiki/en/content/",
-            title="📚 DeepWiki Open Generation",
-            border_style="cyan"
-        ))
-
-        ctx = ChatContext(
-            project_id=project_id,
-            project_name=project_info.repo_name,
-            curr_agent_id="deepwiki_open_agent",
-            query=f"[Codebase: {project_info.repo_name}, project_id: {project_id}] {query}",
-            history=[],
-            user_id=ctx_obj.default_user_id,
-            conversation_id=f"deepwiki_{project_id}",
+    if verbose:
+        executor = StreamingLocalSkillScriptExecutor(
+            callback=_verbose_skill_stream_callback(),
+            timeout=timeout,
         )
+    else:
+        from pydantic_ai_skills.local import LocalSkillScriptExecutor
+        executor = LocalSkillScriptExecutor(timeout=timeout)
 
-        # Add README content to context if provided
-        if readme_content:
-            ctx.additional_context = f"\n\nREADME Content:\n{readme_content}\n"
+    skills_dir_obj = SkillsDirectory(path=str(skills_path), script_executor=executor)
+    skills_toolset = SkillsToolset(directories=[skills_dir_obj])
 
-        console.print("\n[bold green]🤖 DeepWiki Open Agent:[/bold green] generating...\n")
+    agent = Agent(
+        model=model,
+        instructions="You are a technical documentation expert.",
+        toolsets=[skills_toolset],
+    )
 
-        from potpie.agents.context import ToolCallEventType
-        pages_written = []
-        async for chunk in agent.stream(ctx):
-            if chunk.tool_calls:
-                for tc in chunk.tool_calls:
-                    if tc.event_type == ToolCallEventType.CALL:
-                        console.print(f"\n[dim cyan]🔧 {tc.tool_name}[/dim cyan]", end="", markup=True)
-            if chunk.response:
-                console.print(chunk.response, end="", markup=False)
-                if "✅ Wiki page written to:" in chunk.response:
-                    for line in chunk.response.splitlines():
-                        if "✅ Wiki page written to:" in line:
-                            pages_written.append(line.split("✅ Wiki page written to:")[-1].strip())
+    @agent.instructions
+    async def add_skills(ctx: RunContext) -> str | None:
+        return await skills_toolset.get_instructions(ctx)
 
-        console.print("\n")
+    console.print(f"\n[bold cyan]📚 Running deepwiki-open-wiki skill[/bold cyan]\n")
+    dbg(f"Prompt: {user_prompt}")
 
-        if pages_written:
-            console.print(f"\n[bold green]✅ {len(pages_written)} wiki page(s) written:[/bold green]")
-            for p in pages_written:
-                console.print(f"   [cyan]{p}[/cyan]")
-        else:
-            console.print("[yellow]Wiki generation complete. Check .repowiki/en/content/ for output.[/yellow]")
-
-    except Exception as e:
-        console.print(f"[bold red]Error:[/bold red] {e}")
-        raise click.Abort()
+    async with agent.iter(user_prompt) as agent_run:
+        dbg("Agent started, iterating nodes...")
+        async for node in agent_run:
+            dbg(f"Node: {type(node).__name__}")
+            if Agent.is_call_tools_node(node):
+                for part in node.model_response.parts:
+                    if hasattr(part, "tool_name"):
+                        console.print(f"\n[dim cyan]🔧 {part.tool_name}[/dim cyan]")
+                        if verbose and hasattr(part, "args"):
+                            dbg(f"  args: {part.args}")
+            elif Agent.is_end_node(node):
+                console.print(f"\n[bold green]✅ Wiki generation complete:[/bold green]\n")
+                console.print(Markdown(str(node.data.output)))
 
 
 @cli.command()

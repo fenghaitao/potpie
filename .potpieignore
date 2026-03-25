@@ -2,6 +2,7 @@
 singularity/
 potpie-ui/
 vscode-ext/
+potpie-ext/
 scip/
 potpie.egg-info/
 
@@ -26,6 +27,10 @@ __pycache__/
 .codex/
 .taskmaster/
 worktrees/
+.repowiki/
+.kiro/
+.tmp_repos/
+.deepwiki-open/
 
 # Data/project dirs
 projects/

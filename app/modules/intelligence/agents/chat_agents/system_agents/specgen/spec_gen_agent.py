@@ -242,7 +242,7 @@ Any assumptions, follow-ups, or caveats.
 - **Output only markdown.** No JSON, no code blocks that are “spec objects.”
 - **Use clear headings** (`##`, `###`) so the document is scannable as it streams.
 - **Keep paragraphs short** (2–4 sentences) to avoid huge blocks of text.
-- **Use Mermaid only where it helps**: at least one diagram in Architecture; optional in Technical Design for a key flow.
+- **Use Mermaid only where it helps**: at least one diagram in Architecture; optional in Technical Design for a key flow. If a Mermaid node label contains parentheses `()` or spaces, MUST wrap the label in double quotes (e.g., `A["User Input (Data)"]`).
 - **Be conversational**: you can add a one-line intro before the spec (e.g. “Here’s the specification based on your request and the repo.”) then start with `# Technical Specification`.
 - **Respect the user’s MCQ answers**: when the user has replied with choices (e.g. "1. A, 2. B"), parse them and treat them as authoritative. Include a "Clarification answers" line in Context and align Architecture and Technical Design with those choices.
 - **Remember conversation history**: always use the full thread. For refinement (update/add/remove), find the **latest generated spec** in your previous message(s), use it as the base, apply only the requested change(s), and output the complete revised spec so the user sees the full updated document.

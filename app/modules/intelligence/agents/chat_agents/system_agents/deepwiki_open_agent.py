@@ -276,6 +276,7 @@ Based on the provided source files, create comprehensive documentation covering:
    - Always use "flowchart TD" (top-down), NEVER "graph LR"
    - For sequence diagrams: use ->> for calls, -->> for responses
    - Define all participants at the beginning
+   - If a Mermaid node label contains parentheses `()` or spaces, MUST wrap the label in double quotes (e.g., `A["User Input (Data)"]`).
 
 4. **Tables:** Summarize key information (parameters, configs, data models)
 
