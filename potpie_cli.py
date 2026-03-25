@@ -230,6 +230,8 @@ def cli():
         potpie-cli chat --project <project-id>      # Interactive chat
         potpie-cli ask "How does auth work?" -p <id> # One-shot question
         potpie-cli agents                           # List available agents
+        potpie-cli cache stats                      # Inference cache summary
+        potpie-cli cache clean --inference-expired  # Drop stale inference rows
     """
     pass
 
@@ -254,6 +256,9 @@ def parse():
 def parse_repo(repo_path: str, branch: Optional[str], user_id: Optional[str], cleanup: bool, watch: bool, force: bool):
     """
     Parse a repository and build its knowledge graph.
+
+    If the repo is already parsed at the current commit, Potpie skips work unless
+    you pass --force (e.g. after cache clean or LLM/batching changes).
 
     Examples:
         potpie-cli parse repo /path/to/myproject
@@ -1278,6 +1283,230 @@ async def _remove_all_projects(user_id: str, force: bool):
             with open(ctx_obj.config_file, 'w') as f:
                 yaml.dump(config, f)
             console.print("[dim]Cleared last used project cache.[/dim]")
+
+    except click.Abort:
+        raise
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] {e}")
+        raise click.Abort()
+
+
+# ============================================================================
+# CACHE COMMANDS
+# ============================================================================
+
+@cli.group()
+def cache():
+    """
+    🧹 Inspect or clear Potpie caches (Postgres inference cache, CLI config).
+
+    Examples:
+        potpie-cli cache stats
+        potpie-cli cache clean --inference-expired
+        potpie-cli cache clean --inference-project <project-id> --force
+        potpie-cli cache clean --inference-all --force
+    """
+    pass
+
+
+@cache.command("stats")
+@click.option(
+    "--project-id",
+    "-p",
+    default=None,
+    help="Limit entry counts to rows tagged with this project_id (metadata only)",
+)
+def cache_stats_cmd(project_id: Optional[str]):
+    """Show inference cache statistics."""
+    asyncio.run(_cache_stats(project_id))
+
+
+async def _cache_stats(project_id: Optional[str]):
+    try:
+        runtime = await ctx_obj.get_runtime()
+        from app.modules.parsing.services.cache_cleanup_service import CacheCleanupService
+        from app.modules.parsing.services.inference_cache_service import InferenceCacheService
+
+        db = runtime.db.get_session()
+        try:
+            svc = InferenceCacheService(db)
+            stats = svc.get_cache_stats(project_id=project_id)
+            cleanup = CacheCleanupService(db)
+            cstats = cleanup.get_cleanup_stats()
+        finally:
+            db.close()
+
+        console.print(Panel.fit(
+            f"[bold]Inference cache (Postgres)[/bold]\n"
+            f"  Total rows: [cyan]{stats['total_entries']}[/cyan]\n"
+            f"  Total access events (sum): [cyan]{stats['total_access_count']}[/cyan]\n"
+            f"  Avg accesses / row: [cyan]{stats['average_access_count']:.2f}[/cyan]\n"
+            f"\n[bold]TTL cleanup (INFERENCE_CACHE_TTL_DAYS={cstats['cache_ttl_days']})[/bold]\n"
+            f"  Would expire (older than cutoff): [yellow]{cstats['expired_entries']}[/yellow]\n"
+            f"  Cutoff: [dim]{cstats['cutoff_date']}[/dim]",
+            title="📊 Cache stats",
+            border_style="cyan",
+        ))
+        if project_id:
+            console.print(
+                "[dim]Note: lookups are global by content_hash; project_id filters stats only.[/dim]"
+            )
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] {e}")
+        raise click.Abort()
+
+
+@cache.command("clean")
+@click.option(
+    "--inference-all",
+    is_flag=True,
+    help="Delete all rows in the Postgres inference_cache table",
+)
+@click.option(
+    "--inference-project",
+    type=str,
+    default=None,
+    metavar="PROJECT_ID",
+    help="Delete inference_cache rows tagged with this project_id (not global hash matches)",
+)
+@click.option(
+    "--inference-expired",
+    is_flag=True,
+    help="Delete inference_cache rows older than INFERENCE_CACHE_TTL_DAYS (default 30)",
+)
+@click.option(
+    "--inference-trim",
+    is_flag=True,
+    help="If row count exceeds --max-entries, delete least-accessed rows",
+)
+@click.option(
+    "--max-entries",
+    type=int,
+    default=100_000,
+    show_default=True,
+    help="Retention cap when using --inference-trim",
+)
+@click.option(
+    "--cli-config",
+    is_flag=True,
+    help="Remove last_project from ~/.potpie/config.yaml",
+)
+@click.option(
+    "--force",
+    "-f",
+    is_flag=True,
+    help="Skip confirmation for destructive inference cache actions",
+)
+def cache_clean_cmd(
+    inference_all: bool,
+    inference_project: Optional[str],
+    inference_expired: bool,
+    inference_trim: bool,
+    max_entries: int,
+    cli_config: bool,
+    force: bool,
+):
+    """Clear selected caches. Specify at least one flag."""
+    asyncio.run(
+        _cache_clean(
+            inference_all=inference_all,
+            inference_project=inference_project,
+            inference_expired=inference_expired,
+            inference_trim=inference_trim,
+            max_entries=max_entries,
+            cli_config=cli_config,
+            force=force,
+        )
+    )
+
+
+async def _cache_clean(
+    *,
+    inference_all: bool,
+    inference_project: Optional[str],
+    inference_expired: bool,
+    inference_trim: bool,
+    max_entries: int,
+    cli_config: bool,
+    force: bool,
+):
+    from app.modules.parsing.services.cache_cleanup_service import CacheCleanupService
+
+    has_inference_op = (
+        inference_all
+        or inference_project is not None
+        or inference_expired
+        or inference_trim
+    )
+    if not has_inference_op and not cli_config:
+        raise click.UsageError(
+            "Specify at least one of: --inference-all, --inference-project, "
+            "--inference-expired, --inference-trim, --cli-config"
+        )
+
+    if inference_all and inference_project is not None:
+        raise click.UsageError("Cannot combine --inference-all with --inference-project")
+
+    destructive = inference_all or inference_project is not None
+
+    try:
+        if has_inference_op:
+            runtime = await ctx_obj.get_runtime()
+
+            if destructive and not force:
+                console.print(
+                    "[bold yellow]⚠️  This permanently removes inference cache rows from Postgres.[/bold yellow]"
+                )
+                confirmation = console.input(
+                    "[bold red]Type 'yes' to proceed:[/bold red] "
+                )
+                if confirmation.lower() not in ("yes", "y"):
+                    console.print("[yellow]Cancelled.[/yellow]")
+                    return
+
+            db = runtime.db.get_session()
+            try:
+                cleanup = CacheCleanupService(db)
+                if inference_all:
+                    n = cleanup.clear_all_entries()
+                    console.print(f"[green]Removed {n} inference cache row(s) (full clear).[/green]")
+                elif inference_project is not None:
+                    n = cleanup.clear_entries_for_project(inference_project)
+                    console.print(
+                        f"[green]Removed {n} inference cache row(s) for project "
+                        f"[cyan]{inference_project}[/cyan].[/green]"
+                    )
+                if inference_expired and not inference_all:
+                    n = cleanup.cleanup_expired_entries()
+                    console.print(f"[green]Removed {n} expired inference cache row(s).[/green]")
+                if inference_trim and not inference_all:
+                    n = cleanup.cleanup_least_accessed(max_entries=max_entries)
+                    if n:
+                        console.print(
+                            f"[green]Trimmed {n} least-accessed inference cache row(s) "
+                            f"(cap={max_entries}).[/green]"
+                        )
+                    else:
+                        console.print(
+                            "[dim]Inference cache at or below --max-entries; nothing trimmed.[/dim]"
+                        )
+            finally:
+                db.close()
+
+        if cli_config:
+            import yaml
+
+            ctx_obj.config_dir.mkdir(exist_ok=True)
+            config: dict = {}
+            if ctx_obj.config_file.exists():
+                with open(ctx_obj.config_file) as f:
+                    config = yaml.safe_load(f) or {}
+            if config.pop("last_project", None) is not None:
+                with open(ctx_obj.config_file, "w") as f:
+                    yaml.dump(config, f)
+                console.print("[green]Cleared last_project from CLI config.[/green]")
+            else:
+                console.print("[dim]No last_project entry in CLI config.[/dim]")
 
     except click.Abort:
         raise

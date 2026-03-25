@@ -41,6 +41,26 @@ class CacheCleanupService:
         logger.info(f"Cleaned up {deleted_count} expired cache entries")
         return deleted_count
 
+    def clear_all_entries(self) -> int:
+        """Remove every row from the inference cache table."""
+        result = self.db.execute(delete(InferenceCache))
+        deleted_count = result.rowcount
+        self.db.commit()
+        logger.info(f"Cleared entire inference cache ({deleted_count} rows)")
+        return deleted_count
+
+    def clear_entries_for_project(self, project_id: str) -> int:
+        """Remove inference cache rows whose project_id matches (metadata FK only)."""
+        result = self.db.execute(
+            delete(InferenceCache).where(InferenceCache.project_id == project_id)
+        )
+        deleted_count = result.rowcount
+        self.db.commit()
+        logger.info(
+            f"Cleared {deleted_count} inference cache rows for project_id={project_id!r}"
+        )
+        return deleted_count
+
     def cleanup_least_accessed(self, max_entries: int = 100000) -> int:
         """Remove least accessed entries if cache grows too large"""
         total_entries = self.db.query(InferenceCache).count()

@@ -239,7 +239,7 @@ MODEL_CONFIG_MAP = {
     "github_copilot/gpt-4o": {
         "provider": "github_copilot",
         "auth_provider": "github_copilot",
-        "context_window": 64000,
+        "context_window": 128000,
         "default_params": {"temperature": 0.3, "max_tokens": 16384},
         "capabilities": {
             "supports_pydantic": True,
@@ -253,7 +253,7 @@ MODEL_CONFIG_MAP = {
     "github_copilot/gpt-4o-mini": {
         "provider": "github_copilot",
         "auth_provider": "github_copilot",
-        "context_window": 64000,
+        "context_window": 128000,
         "default_params": {"temperature": 0.3, "max_tokens": 16384},
         "capabilities": {
             "supports_pydantic": True,
@@ -625,10 +625,21 @@ def build_llm_provider_config(
     provider, full_model_name = parse_model_string(model_string)
     config_data = get_config_for_model(full_model_name).copy()
 
+    default_params = dict(config_data["default_params"])
+    if config_type == "inference":
+        raw = os.environ.get("INFERENCE_MAX_OUTPUT_TOKENS") or os.environ.get(
+            "INFERENCE_MAX_TOKENS"
+        )
+        if raw is not None:
+            try:
+                default_params["max_tokens"] = int(str(raw).strip())
+            except (TypeError, ValueError):
+                pass
+
     return LLMProviderConfig(
         provider=config_data["provider"],
         model=full_model_name,
-        default_params=dict(config_data["default_params"]),
+        default_params=default_params,
         capabilities=config_data.get("capabilities", {}),
         base_url=config_data.get("base_url"),
         api_version=config_data.get("api_version"),

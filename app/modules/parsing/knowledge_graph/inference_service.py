@@ -2,7 +2,8 @@ import asyncio
 import os
 import re
 import time
-from typing import Any, Dict, List, Optional
+from textwrap import dedent
+from typing import Any, Dict, List, Optional, Tuple
 
 import tiktoken
 from neo4j import GraphDatabase
@@ -15,6 +16,7 @@ from app.modules.intelligence.provider.provider_service import (
     ProviderService,
 )
 from app.modules.parsing.knowledge_graph.inference_schema import (
+    DocstringNode,
     DocstringRequest,
     DocstringResponse,
 )
@@ -29,6 +31,77 @@ from app.modules.search.search_service import SearchService
 from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
+
+# Match GPT-4o / GitHub Copilot API token counting (o200k_base), not cl100k_base.
+INFERENCE_TOKEN_COUNT_MODEL = "gpt-4o"
+
+DOCSTRING_INFERENCE_SYSTEM_MESSAGE = (
+    "You are an expert software documentation assistant. You will analyze code "
+    "and provide structured documentation in JSON format."
+)
+
+# Shared with generate_response — must stay byte-identical to the user message
+# skeleton (before code_snippets are inserted) for accurate batch sizing.
+DOCSTRING_INFERENCE_USER_PROMPT_TEMPLATE = dedent("""
+    You are a senior software engineer with expertise in code analysis and documentation. Your task is to generate concise docstrings for each code snippet and tagging it based on its purpose. Approach this task methodically, following these steps:
+
+    1. **Node Identification**:
+    - Carefully parse the provided `code_snippets` to identify each `node_id` and its corresponding code block.
+    - Ensure that every `node_id` present in the `code_snippets` is accounted for and processed individually.
+
+    2. **For Each Node**:
+    Perform the following tasks for every identified `node_id` and its associated code:
+
+    You are a software engineer tasked with generating concise docstrings for each code snippet and tagging it based on its purpose.
+
+    **Instructions**:
+    2.1. **Identify Code Type**:
+    - Determine whether each code snippet is primarily **backend** or **frontend**.
+    - Use common indicators:
+        - **Backend**: Handles database interactions, API endpoints, configuration, or server-side logic.
+        - **Frontend**: Contains UI components, event handling, state management, or styling.
+
+    2.2. **Summarize the Purpose**:
+    - Based on the identified type, write a brief (1-2 sentences) summary of the code's main purpose and functionality.
+    - Focus on what the code does, its role in the system, and any critical operations it performs.
+    - If the code snippet is related to **specific roles** like authentication, database access, or UI component, state management, explicitly mention this role.
+
+    2.3. **Assign Tags Based on Code Type**:
+    - Use these specific tags based on whether the code is identified as backend or frontend:
+
+    **Backend Tags**:
+        - **AUTH**: Handles authentication or authorization.
+        - **DATABASE**: Interacts with databases.
+        - **API**: Defines API endpoints.
+        - **UTILITY**: Provides helper or utility functions.
+        - **PRODUCER**: Sends messages to a queue or topic.
+        - **CONSUMER**: Processes messages from a queue or topic.
+        - **EXTERNAL_SERVICE**: Integrates with external services.
+        - **CONFIGURATION**: Manages configuration settings.
+
+    **Frontend Tags**:
+        - **UI_COMPONENT**: Renders a visual component in the UI.
+        - **FORM_HANDLING**: Manages form data submission and validation.
+        - **STATE_MANAGEMENT**: Manages application or component state.
+        - **DATA_BINDING**: Binds data to UI elements.
+        - **ROUTING**: Manages frontend navigation.
+        - **EVENT_HANDLING**: Handles user interactions.
+        - **STYLING**: Applies styling or theming.
+        - **MEDIA**: Manages media, like images or video.
+        - **ANIMATION**: Defines animations in the UI.
+        - **ACCESSIBILITY**: Implements accessibility features.
+        - **DATA_FETCHING**: Fetches data for frontend use.
+
+    Your response must be a valid JSON object containing a list of docstrings, where each docstring object has:
+    - node_id: The ID of the node being documented
+    - docstring: A concise description of the code's purpose and functionality
+    - tags: A list of relevant tags from the categories above
+
+    Here are the code snippets:
+
+    {code_snippets}
+""").strip()
+
 
 # Global singleton for SentenceTransformer to avoid reloading
 _embedding_model = None
@@ -574,52 +647,47 @@ class InferenceService:
         return DocstringResponse(docstrings=consolidated_responses)
 
     def _get_inference_max_tokens(self) -> int:
-        """Return the max input tokens budget for inference batches, based on the configured model."""
+        """Return the max input tokens budget for inference batches.
+
+        For providers with independent input/output limits (e.g. github_copilot),
+        the prompt limit is returned directly.  For standard APIs where input and
+        output share a combined context window, the output budget is subtracted.
+        """
         from app.modules.intelligence.provider.llm_config import get_context_window
         model = self.provider_service.inference_config.model
+        model_str = (model or "").strip()
+        # github_copilot gateway enforces independent limits:
+        #   prompt ≤ 64K, completion ≤ 12K (separate, not a shared pool)
+        if model_str == "github_copilot/gpt-4o":
+            return 64000
         context_window = get_context_window(model) or 128000
-        # Use half the context window for input, leaving room for output tokens
-        return context_window // 2
+        output_budget  = self._get_inference_effective_output_tokens()
+        return max(8192, context_window - output_budget)
 
     def _create_batches_from_nodes(
         self,
         nodes: List[Dict],
-        max_tokens: int = None,  # None = auto-detect from provider
+        max_tokens: int = None,
         model: str = "gpt-4",
         project_id: Optional[str] = None,
     ) -> List[List[DocstringRequest]]:
         """
-        Create LLM batches from nodes that need inference (cache misses).
-
-        Only processes nodes that don't have cached_inference set.
-        Uses normalized_text if available, otherwise normalizes on the fly.
+        Filter nodes needing inference, create DocstringRequest objects (splitting
+        large nodes into chunks), then delegate packing to _build_batches.
         """
         if max_tokens is None:
             max_tokens = self._get_inference_max_tokens()
-        batch_start_time = time.time()
         node_dict = {node["node_id"]: node for node in nodes}
 
-        # Filter to nodes that need LLM inference:
-        # - No cache hit (cached_inference not set)
-        # - Has text content
-        # - Is cacheable (skip small/trivial nodes that aren't worth processing)
         nodes_with_cached = sum(1 for n in nodes if n.get("cached_inference"))
-        nodes_with_text = sum(1 for n in nodes if n.get("text"))
-
-        # Skip uncacheable nodes - they're typically too small or have unresolved references
-        # Only process nodes that have should_cache=True (cacheable but cache miss)
-        # OR have content_hash set (cacheable)
         nodes_needing_inference = [
-            n
-            for n in nodes
+            n for n in nodes
             if not n.get("cached_inference")
             and n.get("text")
-            and (n.get("should_cache") or n.get("content_hash"))  # Only cacheable nodes
+            and (n.get("should_cache") or n.get("content_hash"))
         ]
-
         nodes_skipped_uncacheable = sum(
-            1
-            for n in nodes
+            1 for n in nodes
             if not n.get("cached_inference")
             and n.get("text")
             and not n.get("should_cache")
@@ -627,23 +695,18 @@ class InferenceService:
         )
 
         logger.info(
-            f"[BATCHING] Creating batches for {len(nodes_needing_inference)} nodes "
-            f"(total: {len(nodes)}, cached: {nodes_with_cached}, with text: {nodes_with_text}, "
+            f"[BATCHING] Preparing requests for {len(nodes_needing_inference)} nodes "
+            f"(total: {len(nodes)}, cached: {nodes_with_cached}, "
             f"skipped uncacheable: {nodes_skipped_uncacheable})",
             project_id=project_id,
             nodes_total=len(nodes),
             nodes_with_cached=nodes_with_cached,
-            nodes_with_text=nodes_with_text,
             nodes_needing_inference=len(nodes_needing_inference),
             nodes_skipped_uncacheable=nodes_skipped_uncacheable,
         )
 
-        batches = []
-        current_batch = []
-        current_tokens = 0
-
+        requests: List[DocstringRequest] = []
         for node in nodes_needing_inference:
-            # Use normalized text if available, otherwise normalize now
             text = node.get("normalized_text")
             if not text:
                 text = self._normalize_node_text(node.get("text", ""), node_dict)
@@ -651,73 +714,229 @@ class InferenceService:
 
             node_tokens = self.num_tokens_from_string(text, model)
 
-            # Handle large nodes by splitting
             if node_tokens > max_tokens:
                 logger.debug(
                     f"Node {node['node_id'][:8]} exceeds token limit ({node_tokens}). Splitting..."
                 )
-                node_chunks = self.split_large_node(text, node["node_id"], max_tokens)
-
-                for chunk in node_chunks:
-                    chunk_tokens = self.num_tokens_from_string(chunk["text"], model)
-
-                    if current_tokens + chunk_tokens > max_tokens:
-                        if current_batch:
-                            batches.append(current_batch)
-                        current_batch = []
-                        current_tokens = 0
-
-                    current_batch.append(
-                        DocstringRequest(
-                            node_id=chunk["node_id"],
-                            text=chunk["text"],
-                            metadata={
-                                "is_chunk": True,
-                                "parent_node_id": chunk["parent_node_id"],
-                                "chunk_index": chunk.get("chunk_index", 0),
-                                "should_cache": node.get("should_cache", False),
-                                "content_hash": node.get("content_hash"),
-                                "node_type": node.get("node_type"),
-                            },
-                        )
-                    )
-                    current_tokens += chunk_tokens
-                continue
-
-            # Add to batch
-            if current_tokens + node_tokens > max_tokens:
-                if current_batch:
-                    batches.append(current_batch)
-                current_batch = []
-                current_tokens = 0
-
-            current_batch.append(
-                DocstringRequest(
+                for chunk in self.split_large_node(text, node["node_id"], max_tokens):
+                    requests.append(DocstringRequest(
+                        node_id=chunk["node_id"],
+                        text=chunk["text"],
+                        metadata={
+                            "is_chunk": True,
+                            "parent_node_id": chunk["parent_node_id"],
+                            "chunk_index": chunk.get("chunk_index", 0),
+                            "should_cache": node.get("should_cache", False),
+                            "content_hash": node.get("content_hash"),
+                            "node_type": node.get("node_type"),
+                            "file_path": node.get("file_path"),
+                        },
+                    ))
+            else:
+                requests.append(DocstringRequest(
                     node_id=node["node_id"],
                     text=text,
                     metadata={
                         "should_cache": node.get("should_cache", False),
                         "content_hash": node.get("content_hash"),
                         "node_type": node.get("node_type"),
+                        "file_path": node.get("file_path"),
                     },
-                )
+                ))
+
+        return self._build_batches(requests, project_id=project_id)
+
+    def _get_inference_effective_output_tokens(self) -> int:
+        """Max completion tokens for inference calls."""
+        max_out = self.provider_service.inference_config.default_params.get("max_tokens")
+        if max_out is None:
+            max_out = int(os.environ.get("INFERENCE_MAX_OUTPUT_TOKENS", "16384"))
+        # github_copilot/gpt-4o caps around 12k despite declared higher limits
+        model = (self.provider_service.inference_config.model or "").strip()
+        if model == "github_copilot/gpt-4o":
+            max_out = min(int(max_out), 12288)
+        return max(1024, int(max_out))
+
+    def _build_batches(
+        self,
+        requests: List[DocstringRequest],
+        project_id: Optional[str] = None,
+    ) -> List[List[DocstringRequest]]:
+        """Single-pass greedy batcher respecting both input and output token budgets.
+
+        Replaces the former two-pass approach (_create_batches_from_nodes +
+        _split_batches_for_output_token_budget). Re-used identically for primary
+        batching and retry passes.
+
+        max_nodes is derived from both budgets using the actual average snippet size
+        of the requests being packed — no hard-coded constant required:
+          max_nodes_by_input  = (input_budget  - prompt_overhead) // avg_snippet_tokens
+          max_nodes_by_output = (output_budget - JSON_ENVELOPE)   // output_per_node
+          max_nodes           = min(max_nodes_by_input, max_nodes_by_output)
+
+        Calibration (device-modeling-language): actual JSON output per returned node
+        is 45–86 tokens regardless of snippet size (p50 ≈ 62, p90 ≈ 74). The model
+        writes a concise 1–2 sentence docstring, so output does not scale with code
+        length. INFERENCE_OUTPUT_TOKENS_PER_NODE=272 targets ~45 nodes/batch.
+
+        Tuning (env vars):
+          INFERENCE_OUTPUT_TOKENS_PER_NODE  – estimated completion tokens per node (default 272).
+          INFERENCE_MAX_NODES_PER_BATCH     – optional hard override for max_nodes.
+        """
+        if not requests:
+            return []
+
+        input_budget  = self._get_inference_max_tokens()
+        output_budget = self._get_inference_effective_output_tokens()
+
+        try:
+            output_per_node = max(10, int(os.environ.get("INFERENCE_OUTPUT_TOKENS_PER_NODE", "272")))
+        except (TypeError, ValueError):
+            output_per_node = 272
+
+        tok_model = INFERENCE_TOKEN_COUNT_MODEL
+        # Tokenize the same system + user skeleton generate_response sends (empty snippets).
+        prompt_overhead = (
+            self.num_tokens_from_string(DOCSTRING_INFERENCE_SYSTEM_MESSAGE, tok_model)
+            + self.num_tokens_from_string(
+                DOCSTRING_INFERENCE_USER_PROMPT_TEMPLATE.format(code_snippets=""),
+                tok_model,
             )
-            current_tokens += node_tokens
+        )
+        # Tokens for {"docstrings":[...]} JSON envelope in the structured output
+        JSON_ENVELOPE = 20
 
-        if current_batch:
-            batches.append(current_batch)
+        # Count tokens exactly as generate_response formats each node in the prompt:
+        #   "node_id: {uuid} \n```\n{text}\n```\n\n "
+        # Use gpt-4o tokenizer to match Copilot / GPT-4o API counting (o200k_base).
+        counts = [
+            self.num_tokens_from_string(
+                f"node_id: {r.node_id} \n```\n{r.text or ''}\n```\n\n ", tok_model
+            )
+            for r in requests
+        ]
 
-        batch_time = time.time() - batch_start_time
-        total_batched = sum(len(b) for b in batches)
+        # Keep a prompt-side safety margin to avoid provider-side tokenization drift
+        # causing occasional 64K overruns (Copilot gateway limit).
+        try:
+            input_safety_margin = max(
+                0, int(os.environ.get("INFERENCE_INPUT_SAFETY_MARGIN_TOKENS", "2000"))
+            )
+        except (TypeError, ValueError):
+            input_safety_margin = 2000
+        input_pack_budget = max(4096, input_budget - input_safety_margin)
 
+        # Derive max_nodes from both budgets using the actual average snippet size.
+        avg_snippet         = max(1, sum(counts) // len(counts))
+        max_nodes_by_input  = max(1, (input_pack_budget - prompt_overhead) // avg_snippet)
+        max_nodes_by_output = max(1, (output_budget - JSON_ENVELOPE)   // output_per_node)
+        max_nodes           = min(max_nodes_by_input, max_nodes_by_output)
+
+        # Allow an explicit hard override via env var.
+        raw_override = os.environ.get("INFERENCE_MAX_NODES_PER_BATCH")
+        if raw_override is not None:
+            try:
+                max_nodes = max(1, int(raw_override))
+            except (TypeError, ValueError):
+                pass
+
+        batches: List[List[DocstringRequest]] = []
+        cur: List[DocstringRequest] = []
+        cur_in  = prompt_overhead
+        cur_out = JSON_ENVELOPE
+
+        for req, node_in in zip(requests, counts):
+            needs_flush = bool(cur) and (
+                len(cur) >= max_nodes
+                or cur_in + node_in  > input_pack_budget
+                or cur_out + output_per_node > output_budget
+            )
+            if needs_flush:
+                batches.append(cur)
+                cur     = []
+                cur_in  = prompt_overhead
+                cur_out = JSON_ENVELOPE
+            cur.append(req)
+            cur_in  += node_in
+            cur_out += output_per_node
+
+        if cur:
+            batches.append(cur)
+
+        total_nodes = sum(len(b) for b in batches)
         logger.info(
-            f"[BATCHING] Created {len(batches)} batches with {total_batched} nodes in {batch_time:.2f}s",
+            f"[BATCHING] Created {len(batches)} batches for {total_nodes} nodes "
+            f"(max_nodes={max_nodes} [input-derived={max_nodes_by_input}, "
+            f"output-derived={max_nodes_by_output}], "
+            f"avg_snippet={avg_snippet}, prompt_overhead={prompt_overhead}, "
+            f"input_budget={input_budget}, input_pack_budget={input_pack_budget}, "
+            f"input_safety_margin={input_safety_margin}, "
+            f"output_budget={output_budget}, "
+            f"output_per_node={output_per_node}, tok_model={tok_model})",
             project_id=project_id,
             batch_count=len(batches),
-            total_batched=total_batched,
+            total_batched_nodes=total_nodes,
+            max_nodes_per_batch=max_nodes,
+            max_nodes_by_input=max_nodes_by_input,
+            max_nodes_by_output=max_nodes_by_output,
+            avg_snippet_tokens=avg_snippet,
+            prompt_overhead_tokens=prompt_overhead,
+            input_budget_tokens=input_budget,
+            input_pack_budget_tokens=input_pack_budget,
+            input_safety_margin_tokens=input_safety_margin,
+            output_budget_tokens=output_budget,
+            output_per_node_tokens=output_per_node,
+            token_count_model=tok_model,
         )
-
         return batches
+
+    def _actual_docstring_response_json_tokens(
+        self, response: DocstringResponse, model: str = INFERENCE_TOKEN_COUNT_MODEL
+    ) -> int:
+        """Tiktoken count of the structured JSON the model returned (proxy for completion size)."""
+        if not response.docstrings:
+            return self.num_tokens_from_string('{"docstrings":[]}', model)
+        return self.num_tokens_from_string(response.model_dump_json(), model)
+
+    def _inference_output_calibration_log_enabled(self) -> bool:
+        raw = os.environ.get("INFERENCE_OUTPUT_CALIBRATION_LOG", "0")
+        return str(raw).strip().lower() in ("1", "true", "yes", "on")
+
+    def _log_inference_output_calibration(
+        self,
+        batch: List[DocstringRequest],
+        result: DocstringResponse,
+        repo_id: str,
+    ) -> None:
+        """Log snippet vs measured JSON output. Enable with INFERENCE_OUTPUT_CALIBRATION_LOG=1."""
+        if not self._inference_output_calibration_log_enabled():
+            return
+        model = INFERENCE_TOKEN_COUNT_MODEL
+        snippet_sum = sum(self.num_tokens_from_string(r.text or "", model) for r in batch)
+        actual_json = self._actual_docstring_response_json_tokens(result, model=model)
+        returned = len(result.docstrings)
+        requested = len(batch)
+        by_id = {r.node_id: r for r in batch}
+        matched = [by_id[d.node_id] for d in result.docstrings if d.node_id in by_id]
+        ret_snippet_sum = sum(self.num_tokens_from_string(r.text or "", model) for r in matched)
+        doc_text_sum = sum(
+            self.num_tokens_from_string(d.docstring or "", model) for d in result.docstrings
+        )
+        avg_doc_per_snip = (doc_text_sum / ret_snippet_sum) if ret_snippet_sum > 0 else None
+        per_node_json    = (actual_json  / returned)        if returned > 0        else None
+        logger.info(
+            f"[INFERENCE][OUTPUT_CALIB] batch nodes={requested} returned={returned} | "
+            f"snippet_tokens_sum={snippet_sum} actual_json_out_tokens={actual_json} | "
+            f"per_node_json_tokens={per_node_json} "
+            f"avg_docstring_tokens_per_snippet_token={avg_doc_per_snip}",
+            project_id=repo_id,
+            batch_requested_nodes=requested,
+            batch_returned_docstrings=returned,
+            snippet_tokens_sum=snippet_sum,
+            actual_json_output_tokens=actual_json,
+            per_node_json_tokens=per_node_json,
+            avg_docstring_tokens_per_snippet_token=avg_doc_per_snip,
+        )
 
     async def generate_docstrings_for_entry_points(
         self,
@@ -1042,7 +1261,7 @@ class InferenceService:
         all_docstrings = {"docstrings": []}
         total_cache_stored_count = 0
 
-        # Step 6: Process LLM batches and store results in cache
+        # Step 6: Process LLM batches and store results in cache (two-phase design)
         llm_batch_start = time.time()
         logger.info(
             f"[INFERENCE] Step 6/6: Processing {len(batches)} LLM batches",
@@ -1051,184 +1270,233 @@ class InferenceService:
         )
 
         semaphore = asyncio.Semaphore(self.parallel_requests)
-
-        batch_timings = []
-        cache_store_times = []
+        batch_timings:     List[float] = []
+        cache_store_times: List[float] = []
+        embedding_times:   List[float] = []
         total_cache_stored_count = 0
 
-        async def process_batch(batch, batch_index: int):
+        async def process_batch(
+            batch: List[DocstringRequest],
+            batch_index: int,
+            total: int,
+            phase: str = "primary",
+        ) -> Tuple[List[DocstringNode], List[DocstringRequest]]:
+            """Make one LLM call, write results to cache+Neo4j immediately.
+            Returns (docstrings_obtained, skipped_requests)."""
             nonlocal total_cache_stored_count
             async with semaphore:
-                batch_process_start = time.time()
+                batch_start = time.time()
                 logger.info(
-                    f"[INFERENCE] Processing LLM batch {batch_index + 1}/{len(batches)} ({len(batch)} nodes)",
+                    f"[INFERENCE] {phase} batch {batch_index + 1}/{total} ({len(batch)} nodes)",
                     project_id=repo_id,
+                    phase=phase,
                     batch_index=batch_index + 1,
-                    total_batches=len(batches),
+                    total_batches=total,
                     batch_size=len(batch),
                 )
                 try:
-                    # Generate inference for batch
-                    llm_start = time.time()
-                    response = await self.generate_response(batch, repo_id)
-                    llm_time = time.time() - llm_start
-
+                    response, prompt_input_tokens = await self.generate_response(
+                        batch, repo_id
+                    )
                     if not isinstance(response, DocstringResponse):
                         logger.warning(
-                            f"[INFERENCE] Invalid response from LLM for batch {batch_index + 1}. Retrying...",
+                            f"[INFERENCE] Invalid response for {phase} batch "
+                            f"{batch_index + 1}/{total}; treating all as skipped",
                             project_id=repo_id,
-                            batch_index=batch_index + 1,
                         )
-                        llm_retry_start = time.time()
-                        response = await self.generate_response(batch, repo_id)
-                        llm_time += time.time() - llm_retry_start
+                        return [], list(batch)
 
-                    if isinstance(response, DocstringResponse):
-                        # Store results in cache and Neo4j
-                        cache_store_start = time.time()
-                        batch_cache_stored = 0
+                    returned_ids = {d.node_id for d in response.docstrings}
+                    skipped      = [req for req in batch if req.node_id not in returned_ids]
 
-                        # Pre-generate embeddings for all docstrings in batch
-                        # This allows us to cache embeddings and reuse them in Neo4j update
-                        docstring_embeddings = {}
-                        for docstring_result in response.docstrings:
-                            embedding = self.generate_embedding(
-                                docstring_result.docstring
-                            )
-                            docstring_embeddings[docstring_result.node_id] = embedding
-
-                        # Build lookup by node_id for correct matching (not positional zip)
-                        response_by_id = {d.node_id: d for d in response.docstrings}
-
-                        for request in batch:
-                            docstring_result = response_by_id.get(request.node_id)
-                            if docstring_result is None:
-                                continue
-                            metadata = request.metadata or {}
-                            embedding = docstring_embeddings.get(
-                                docstring_result.node_id
-                            )
-
-                            # Store in cache if eligible (includes embedding for future reuse)
-                            if (
-                                cache_service
-                                and metadata.get("should_cache")
-                                and metadata.get("content_hash")
-                            ):
-                                try:
-                                    store_start = time.time()
-                                    # Convert DocstringResult to dictionary for caching
-                                    inference_data = {
-                                        "node_id": docstring_result.node_id,
-                                        "docstring": docstring_result.docstring,
-                                        "tags": docstring_result.tags,
-                                    }
-
-                                    # Store with embedding for future cache hits
-                                    cache_service.store_inference(
-                                        content_hash=metadata["content_hash"],
-                                        inference_data=inference_data,
-                                        project_id=repo_id,
-                                        node_type=metadata.get("node_type"),
-                                        content_length=len(request.text),
-                                        embedding_vector=embedding,
-                                        tags=docstring_result.tags,
-                                    )
-                                    cache_store_times.append(time.time() - store_start)
-                                    batch_cache_stored += 1
-                                    total_cache_stored_count += 1
-                                except Exception as cache_error:
-                                    logger.warning(
-                                        f"[INFERENCE] Failed to cache inference for node {request.node_id}: {cache_error}",
-                                        project_id=repo_id,
-                                        node_id=request.node_id,
-                                    )
-
-                        cache_store_time = time.time() - cache_store_start
-
-                        # Handle chunk consolidation before Neo4j update
-                        neo4j_update_start = time.time()
-                        processed_response = self.process_chunk_responses(
-                            response, batch
+                    # Generate embeddings for returned docstrings
+                    emb_start = time.time()
+                    docstring_embeddings: Dict[str, List[float]] = {}
+                    for doc in response.docstrings:
+                        docstring_embeddings[doc.node_id] = self.generate_embedding(
+                            doc.docstring
                         )
-                        if processed_response:
-                            # Pass pre-generated embeddings to avoid regenerating
-                            self.update_neo4j_with_docstrings(
-                                repo_id, processed_response, docstring_embeddings
-                            )
-                        neo4j_update_time = time.time() - neo4j_update_start
+                    embedding_times.append(time.time() - emb_start)
 
-                        # Generate fallback docstrings for nodes the LLM skipped
-                        returned_ids = {d.node_id for d in response.docstrings}
-                        skipped = [req for req in batch if req.node_id not in returned_ids]
-                        if skipped:
-                            logger.debug(f"Batch {batch_index}: LLM skipped {len(skipped)} nodes, generating fallback docstrings")
-                            self._write_fallback_docstrings(repo_id, skipped)
+                    # Write to inference cache
+                    cache_start       = time.time()
+                    batch_cache_stored = 0
+                    response_by_id    = {d.node_id: d for d in response.docstrings}
+                    for request in batch:
+                        doc = response_by_id.get(request.node_id)
+                        if doc is None:
+                            continue
+                        metadata = request.metadata or {}
+                        if (
+                            cache_service
+                            and metadata.get("should_cache")
+                            and metadata.get("content_hash")
+                        ):
+                            try:
+                                cache_service.store_inference(
+                                    content_hash=metadata["content_hash"],
+                                    inference_data={
+                                        "node_id": doc.node_id,
+                                        "docstring": doc.docstring,
+                                        "tags": doc.tags,
+                                    },
+                                    project_id=repo_id,
+                                    node_type=metadata.get("node_type"),
+                                    content_length=len(request.text),
+                                    embedding_vector=docstring_embeddings.get(doc.node_id),
+                                    tags=doc.tags,
+                                )
+                                batch_cache_stored += 1
+                                total_cache_stored_count += 1
+                            except Exception as cache_err:
+                                logger.warning(
+                                    f"[INFERENCE] Cache store failed for node "
+                                    f"{request.node_id}: {cache_err}",
+                                    project_id=repo_id,
+                                    node_id=request.node_id,
+                                )
+                    cache_time = time.time() - cache_start
+                    cache_store_times.append(cache_time)
 
-                        batch_process_time = time.time() - batch_process_start
-                        batch_timings.append(batch_process_time)
-
-                        logger.info(
-                            f"[INFERENCE] Completed batch {batch_index + 1}/{len(batches)}: "
-                            f"LLM: {llm_time:.2f}s, "
-                            f"Cache store: {cache_store_time:.3f}s ({batch_cache_stored} stored in this batch), "
-                            f"Neo4j update: {neo4j_update_time:.2f}s, "
-                            f"Total: {batch_process_time:.2f}s",
-                            project_id=repo_id,
-                            batch_index=batch_index + 1,
-                            llm_time_seconds=llm_time,
-                            cache_store_time_seconds=cache_store_time,
-                            batch_cache_stored=batch_cache_stored,
-                            neo4j_update_time_seconds=neo4j_update_time,
-                            batch_process_time_seconds=batch_process_time,
+                    # Write to Neo4j (consolidate chunks first)
+                    neo4j_start       = time.time()
+                    processed_response = self.process_chunk_responses(response, batch)
+                    if processed_response:
+                        self.update_neo4j_with_docstrings(
+                            repo_id, processed_response, docstring_embeddings
                         )
+                    neo4j_time = time.time() - neo4j_start
 
-                    return response
-
-                except Exception as e:
-                    batch_process_time = time.time() - batch_process_start
-                    logger.error(
-                        f"[INFERENCE] Failed to process batch {batch_index + 1}: {e} (took {batch_process_time:.2f}s)",
+                    elapsed = time.time() - batch_start
+                    batch_timings.append(elapsed)
+                    logger.info(
+                        f"[INFERENCE] {phase} batch {batch_index + 1}/{total}: "
+                        f"{len(response.docstrings)} returned, {len(skipped)} skipped, "
+                        f"input_tokens={prompt_input_tokens}, "
+                        f"emb={embedding_times[-1]:.2f}s, "
+                        f"cache={cache_time:.3f}s ({batch_cache_stored} stored), "
+                        f"neo4j={neo4j_time:.2f}s, total={elapsed:.2f}s",
                         project_id=repo_id,
+                        phase=phase,
                         batch_index=batch_index + 1,
-                        batch_process_time_seconds=batch_process_time,
+                        total_batches=total,
+                        returned_count=len(response.docstrings),
+                        skipped_count=len(skipped),
+                        prompt_input_tokens=prompt_input_tokens,
+                        embedding_time_seconds=embedding_times[-1],
+                        cache_time_seconds=cache_time,
+                        batch_cache_stored=batch_cache_stored,
+                        neo4j_time_seconds=neo4j_time,
+                        batch_total_seconds=elapsed,
                     )
-                    # Continue with next batch instead of failing entire operation
-                    return DocstringResponse(docstrings=[])
+                    return list(response.docstrings), skipped
 
-        tasks = [process_batch(batch, i) for i, batch in enumerate(batches)]
-        results = await asyncio.gather(*tasks)
-        llm_batch_time = time.time() - llm_batch_start
+                except Exception as exc:
+                    elapsed = time.time() - batch_start
+                    logger.error(
+                        f"[INFERENCE] {phase} batch {batch_index + 1}/{total} failed: "
+                        f"{exc} ({elapsed:.2f}s)",
+                        project_id=repo_id,
+                        phase=phase,
+                        batch_index=batch_index + 1,
+                        batch_total_seconds=elapsed,
+                    )
+                    return [], list(batch)
 
-        avg_batch_time = sum(batch_timings) / len(batch_timings) if batch_timings else 0
-        avg_cache_store_time = (
-            sum(cache_store_times) / len(cache_store_times) if cache_store_times else 0
+        # ── Phase 1: Primary LLM pass (all batches in parallel) ─────────────────
+        total_primary = len(batches)
+        primary_results = await asyncio.gather(
+            *[process_batch(b, i, total_primary, "primary") for i, b in enumerate(batches)]
         )
+        all_skipped: List[DocstringRequest] = []
+        for docs, skipped in primary_results:
+            all_docstrings["docstrings"].extend(docs)
+            all_skipped.extend(skipped)
+
+        primary_returned = sum(len(r[0]) for r in primary_results)
+        logger.info(
+            f"[INFERENCE] Primary pass complete: {total_primary} batches, "
+            f"{primary_returned} docstrings returned, {len(all_skipped)} skipped",
+            project_id=repo_id,
+            primary_batches=total_primary,
+            primary_returned=primary_returned,
+            primary_skipped=len(all_skipped),
+        )
+
+        # ── Phase 2: Retry pass(es) on globally-collected skipped nodes ──────────
+        try:
+            max_retry_attempts = max(
+                1, int(os.environ.get("INFERENCE_SKIP_RETRY_MAX_ATTEMPTS", "1"))
+            )
+        except (TypeError, ValueError):
+            max_retry_attempts = 1
+
+        for attempt in range(max_retry_attempts):
+            if not all_skipped:
+                break
+            logger.info(
+                f"[INFERENCE] Retry attempt {attempt + 1}/{max_retry_attempts}: "
+                f"{len(all_skipped)} nodes to retry",
+                project_id=repo_id,
+                retry_attempt=attempt + 1,
+                retry_max_attempts=max_retry_attempts,
+                retry_node_count=len(all_skipped),
+            )
+            retry_batches = self._build_batches(all_skipped, project_id=repo_id)
+            total_retry   = len(retry_batches)
+            retry_results = await asyncio.gather(
+                *[
+                    process_batch(b, i, total_retry, f"retry-{attempt + 1}")
+                    for i, b in enumerate(retry_batches)
+                ]
+            )
+            newly_skipped: List[DocstringRequest] = []
+            for docs, skipped in retry_results:
+                all_docstrings["docstrings"].extend(docs)
+                newly_skipped.extend(skipped)
+            recovered = len(all_skipped) - len(newly_skipped)
+            logger.info(
+                f"[INFERENCE] Retry attempt {attempt + 1}: recovered {recovered}/"
+                f"{len(all_skipped)}, still missing {len(newly_skipped)}",
+                project_id=repo_id,
+                retry_attempt=attempt + 1,
+                retry_recovered=recovered,
+                retry_still_missing=len(newly_skipped),
+            )
+            all_skipped = newly_skipped
+
+        # ── Phase 3: Fallback stubs for anything still missing ───────────────────
+        if all_skipped:
+            logger.info(
+                f"[INFERENCE] Writing fallback stubs for {len(all_skipped)} nodes "
+                f"not recovered after {max_retry_attempts} retry attempt(s)",
+                project_id=repo_id,
+                fallback_count=len(all_skipped),
+            )
+            self._write_fallback_docstrings(repo_id, all_skipped)
+
+        llm_batch_time   = time.time() - llm_batch_start
+        avg_batch_time   = sum(batch_timings) / len(batch_timings)   if batch_timings   else 0.0
+        avg_cache_time   = sum(cache_store_times) / len(cache_store_times) if cache_store_times else 0.0
+        avg_emb_time     = sum(embedding_times)  / len(embedding_times)   if embedding_times   else 0.0
 
         logger.info(
             f"[INFERENCE] Completed LLM batch processing: "
-            f"{len(batches)} batches in {llm_batch_time:.2f}s, "
-            f"avg batch time: {avg_batch_time:.2f}s, "
-            f"cached {total_cache_stored_count} results (avg store: {avg_cache_store_time*1000:.1f}ms)",
+            f"{total_primary} primary + {max_retry_attempts} retry pass(es) "
+            f"in {llm_batch_time:.2f}s wall, "
+            f"avg batch wall={avg_batch_time:.2f}s, "
+            f"avg embedding={avg_emb_time:.2f}s, "
+            f"avg cache={avg_cache_time*1000:.1f}ms, "
+            f"cached {total_cache_stored_count} results",
             project_id=repo_id,
-            batch_count=len(batches),
-            llm_batch_time_seconds=llm_batch_time,
-            avg_batch_time_seconds=avg_batch_time,
+            primary_batches=total_primary,
+            max_retry_attempts=max_retry_attempts,
+            llm_batch_wall_seconds=llm_batch_time,
+            avg_batch_wall_seconds=avg_batch_time,
+            avg_embedding_seconds=avg_emb_time,
+            avg_cache_store_ms=avg_cache_time * 1000,
             total_cache_stored_count=total_cache_stored_count,
-            avg_cache_store_time_ms=avg_cache_store_time * 1000,
         )
-
-        # Validate results
-        validation_start = time.time()
-        invalid_results = 0
-        for result in results:
-            if not isinstance(result, DocstringResponse):
-                invalid_results += 1
-                logger.error(
-                    f"[INFERENCE] Invalid response during inference. Manually verify project completion.",
-                    project_id=repo_id,
-                )
-        validation_time = time.time() - validation_start
 
         updated_docstrings = all_docstrings
 
@@ -1245,8 +1513,7 @@ class InferenceService:
             f"Cache lookup: {cache_lookup_time:.2f}s, "
             f"Batching: {batch_time:.2f}s, "
             f"Cached processing: {cached_process_time:.2f}s, "
-            f"LLM batches: {llm_batch_time:.2f}s, "
-            f"Validation: {validation_time:.2f}s",
+            f"LLM batches: {llm_batch_time:.2f}s",
             project_id=repo_id,
             total_inference_time_seconds=total_inference_time,
             fetch_time_seconds=fetch_time,
@@ -1255,75 +1522,13 @@ class InferenceService:
             batch_time_seconds=batch_time,
             cached_process_time_seconds=cached_process_time,
             llm_batch_time_seconds=llm_batch_time,
-            validation_time_seconds=validation_time,
-            invalid_results=invalid_results,
         )
 
         return updated_docstrings, cache_stats
 
     async def generate_response(
         self, batch: List[DocstringRequest], repo_id: str
-    ) -> DocstringResponse:
-        base_prompt = """
-        You are a senior software engineer with expertise in code analysis and documentation. Your task is to generate concise docstrings for each code snippet and tagging it based on its purpose. Approach this task methodically, following these steps:
-
-        1. **Node Identification**:
-        - Carefully parse the provided `code_snippets` to identify each `node_id` and its corresponding code block.
-        - Ensure that every `node_id` present in the `code_snippets` is accounted for and processed individually.
-
-        2. **For Each Node**:
-        Perform the following tasks for every identified `node_id` and its associated code:
-
-        You are a software engineer tasked with generating concise docstrings for each code snippet and tagging it based on its purpose.
-
-        **Instructions**:
-        2.1. **Identify Code Type**:
-        - Determine whether each code snippet is primarily **backend** or **frontend**.
-        - Use common indicators:
-            - **Backend**: Handles database interactions, API endpoints, configuration, or server-side logic.
-            - **Frontend**: Contains UI components, event handling, state management, or styling.
-
-        2.2. **Summarize the Purpose**:
-        - Based on the identified type, write a brief (1-2 sentences) summary of the code's main purpose and functionality.
-        - Focus on what the code does, its role in the system, and any critical operations it performs.
-        - If the code snippet is related to **specific roles** like authentication, database access, or UI component, state management, explicitly mention this role.
-
-        2.3. **Assign Tags Based on Code Type**:
-        - Use these specific tags based on whether the code is identified as backend or frontend:
-
-        **Backend Tags**:
-            - **AUTH**: Handles authentication or authorization.
-            - **DATABASE**: Interacts with databases.
-            - **API**: Defines API endpoints.
-            - **UTILITY**: Provides helper or utility functions.
-            - **PRODUCER**: Sends messages to a queue or topic.
-            - **CONSUMER**: Processes messages from a queue or topic.
-            - **EXTERNAL_SERVICE**: Integrates with external services.
-            - **CONFIGURATION**: Manages configuration settings.
-
-        **Frontend Tags**:
-            - **UI_COMPONENT**: Renders a visual component in the UI.
-            - **FORM_HANDLING**: Manages form data submission and validation.
-            - **STATE_MANAGEMENT**: Manages application or component state.
-            - **DATA_BINDING**: Binds data to UI elements.
-            - **ROUTING**: Manages frontend navigation.
-            - **EVENT_HANDLING**: Handles user interactions.
-            - **STYLING**: Applies styling or theming.
-            - **MEDIA**: Manages media, like images or video.
-            - **ANIMATION**: Defines animations in the UI.
-            - **ACCESSIBILITY**: Implements accessibility features.
-            - **DATA_FETCHING**: Fetches data for frontend use.
-
-        Your response must be a valid JSON object containing a list of docstrings, where each docstring object has:
-        - node_id: The ID of the node being documented
-        - docstring: A concise description of the code's purpose and functionality
-        - tags: A list of relevant tags from the categories above
-
-        Here are the code snippets:
-
-        {code_snippets}
-        """
-
+    ) -> Tuple[DocstringResponse, int]:
         # Prepare the code snippets
         code_snippets = ""
         for request in batch:
@@ -1331,35 +1536,25 @@ class InferenceService:
                 f"node_id: {request.node_id} \n```\n{request.text}\n```\n\n "
             )
 
-        # Build full prompt to check token count
-        system_message = "You are an expert software documentation assistant. You will analyze code and provide structured documentation in JSON format."
-        user_content = base_prompt.format(code_snippets=code_snippets)
+        system_message = DOCSTRING_INFERENCE_SYSTEM_MESSAGE
+        user_content = DOCSTRING_INFERENCE_USER_PROMPT_TEMPLATE.format(
+            code_snippets=code_snippets
+        )
 
         # Check total token count before sending — use provider-aware context window
-        # Account for response tokens and overhead (use half the context window for input)
         MAX_CONTEXT_TOKENS = self._get_inference_max_tokens()
-        model = "gpt-4"  # Default model for token counting
+        model = INFERENCE_TOKEN_COUNT_MODEL
 
         system_tokens = self.num_tokens_from_string(system_message, model)
         user_tokens = self.num_tokens_from_string(user_content, model)
         total_tokens = system_tokens + user_tokens
 
         if total_tokens > MAX_CONTEXT_TOKENS:
+            # _build_batches should prevent this, but log a warning if it ever occurs.
             logger.warning(
                 f"Batch exceeds token limit: {total_tokens} > {MAX_CONTEXT_TOKENS}. "
-                f"Batch size: {len(batch)} nodes. Splitting batch..."
+                f"Batch size: {len(batch)} nodes. Proceeding anyway (over-budget)."
             )
-            # Split batch in half and process recursively
-            mid = len(batch) // 2
-            batch1 = batch[:mid]
-            batch2 = batch[mid:]
-
-            result1 = await self.generate_response(batch1, repo_id)
-            result2 = await self.generate_response(batch2, repo_id)
-
-            # Combine results
-            combined_docstrings = result1.docstrings + result2.docstrings
-            return DocstringResponse(docstrings=combined_docstrings)
 
         messages = [
             {
@@ -1390,11 +1585,11 @@ class InferenceService:
             result = DocstringResponse(docstrings=[])
 
         logger.info(f"Parsing project {repo_id}: Inference request completed.")
-        return result
+        self._log_inference_output_calibration(batch, result, repo_id)
+        return result, total_tokens
 
     def _write_fallback_docstrings(self, repo_id: str, skipped_requests) -> None:
         """Write minimal fallback docstrings for nodes the LLM skipped (e.g. short stubs)."""
-        from app.modules.parsing.knowledge_graph.inference_schema import DocstringNode
 
         fallback_docstrings = []
         for req in skipped_requests:
