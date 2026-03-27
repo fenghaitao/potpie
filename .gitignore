@@ -20,6 +20,7 @@ cli/momentum_cli/.momentum
 !.env.template
 *.log
 .cursorrules
+/AGENT.md
 /projects/
 # Ignore PyCharm config
 .idea
@@ -71,6 +72,7 @@ package-lock.json
 .vscode/
 .claude/
 .cursor/
+.pydantic-deep/
 .taskmaster/
 thoughts/
 .codex/

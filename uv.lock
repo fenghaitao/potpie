@@ -454,6 +454,15 @@ wheels = [
 ]
 
 [[package]]
+name = "bracex"
+version = "2.6"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/63/9a/fec38644694abfaaeca2798b58e276a8e61de49e2e37494ace423395febc/bracex-2.6.tar.gz", hash = "sha256:98f1347cd77e22ee8d967a30ad4e310b233f7754dbf31ff3fceb76145ba47dc7", size = 26642, upload-time = "2025-06-22T19:12:31.254Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9d/2a/9186535ce58db529927f6cf5990a849aa9e052eea3e2cfefe20b9e1802da/bracex-2.6-py3-none-any.whl", hash = "sha256:0b0049264e7340b3ec782b5cb99beb325f36c3782a32e36e876452fd49a09952", size = 11508, upload-time = "2025-06-22T19:12:29.781Z" },
+]
+
+[[package]]
 name = "cachecontrol"
 version = "0.14.4"
 source = { registry = "https://pypi.org/simple" }
@@ -2392,7 +2401,7 @@ wheels = [
 
 [[package]]
 name = "litellm"
-version = "1.81.7"
+version = "1.82.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -2408,9 +2417,9 @@ dependencies = [
     { name = "tiktoken" },
     { name = "tokenizers" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/77/69/cfa8a1d68cd10223a9d9741c411e131aece85c60c29c1102d762738b3e5c/litellm-1.81.7.tar.gz", hash = "sha256:442ff38708383ebee21357b3d936e58938172bae892f03bc5be4019ed4ff4a17", size = 14039864, upload-time = "2026-02-03T19:43:10.633Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/6c/00/49bb5c28e0dea0f5086229a2a08d5fdc6c8dc0d8e2acb2a2d1f7dd9f4b70/litellm-1.82.0.tar.gz", hash = "sha256:d388f52447daccbcaafa19a3e68d17b75f1374b5bf2cde680d65e1cd86e50d22", size = 16800355, upload-time = "2026-03-01T02:35:30.363Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/60/95/8cecc7e6377171e4ac96f23d65236af8706d99c1b7b71a94c72206672810/litellm-1.81.7-py3-none-any.whl", hash = "sha256:58466c88c3289c6a3830d88768cf8f307581d9e6c87861de874d1128bb2de90d", size = 12254178, upload-time = "2026-02-03T19:43:08.035Z" },
+    { url = "https://files.pythonhosted.org/packages/28/89/eb28bfcf97d6b045c400e72eb047c381594467048c237dbb6c227764084c/litellm-1.82.0-py3-none-any.whl", hash = "sha256:5496b5d4532cccdc7a095c21cbac4042f7662021c57bc1d17be4e39838929e80", size = 14911978, upload-time = "2026-03-01T02:35:26.844Z" },
 ]
 
 [[package]]
@@ -3645,6 +3654,7 @@ dependencies = [
     { name = "pydantic-ai" },
     { name = "pydantic-ai-skills" },
     { name = "pydantic-ai-todo" },
+    { name = "pydantic-deep", extra = ["cli"] },
     { name = "pygithub" },
     { name = "pygments" },
     { name = "pyjwt" },
@@ -3738,6 +3748,7 @@ requires-dist = [
     { name = "pydantic-ai", specifier = ">=1.56.0" },
     { name = "pydantic-ai-skills", specifier = ">=0.5.1" },
     { name = "pydantic-ai-todo", specifier = ">=0.1.6" },
+    { name = "pydantic-deep", extras = ["cli"], editable = "pydantic-deepagents" },
     { name = "pygithub", specifier = ">=2.8.1" },
     { name = "pygments", specifier = ">=2.19.2" },
     { name = "pyjwt", specifier = ">=2.10.1" },
@@ -4148,6 +4159,38 @@ wheels = [
 ]
 
 [[package]]
+name = "pydantic-ai-backend"
+version = "0.1.14"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "wcmatch" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/cb/cc/901bb48e16c676773b0c0c3cf554b5eb841086355d17bea786295ed3c795/pydantic_ai_backend-0.1.14.tar.gz", hash = "sha256:c1213f36c8ca8f2db78f299de177ac0f3cdcb09230d1ba2857e656e334ed1bfd", size = 13766281, upload-time = "2026-03-12T01:42:37.918Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6a/c6/3af09264faaeea83b98ef4e1aaf199d5ace4edabe1dae1e3430b692ef194/pydantic_ai_backend-0.1.14-py3-none-any.whl", hash = "sha256:8bcc9e05c41c10fbb446ea704de2505548d8bf2c9fc491209305626db2d8bdc2", size = 54991, upload-time = "2026-03-12T01:42:36.459Z" },
+]
+
+[package.optional-dependencies]
+console = [
+    { name = "pydantic-ai" },
+]
+
+[[package]]
+name = "pydantic-ai-middleware"
+version = "0.2.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "genai-prices" },
+    { name = "pydantic" },
+    { name = "pydantic-ai-slim" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/8f/f9/9773cb178ffef0882d8a64a5c37efba1c0a9cdb19a63f00bf62bf2d0260f/pydantic_ai_middleware-0.2.4.tar.gz", hash = "sha256:f2b6a37bd76528076208887695fdffd98b334f8fe75854f67824528c8a987226", size = 502938, upload-time = "2026-03-19T15:24:56.47Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/74/8c/e7231455152db21a641ab169b0c4048bd07d96f717348b39d3a87dea7c5c/pydantic_ai_middleware-0.2.4-py3-none-any.whl", hash = "sha256:5aa296a6c32ef4b0151bb20c8be3de1d80d1cf4c7af478f49b4ee5ab317eb92b", size = 49686, upload-time = "2026-03-19T15:24:54.902Z" },
+]
+
+[[package]]
 name = "pydantic-ai-skills"
 version = "0.5.1"
 source = { registry = "https://pypi.org/simple" }
@@ -4246,16 +4289,16 @@ xai = [
 
 [[package]]
 name = "pydantic-ai-todo"
-version = "0.1.6"
+version = "0.1.10"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "asyncpg" },
     { name = "pydantic" },
     { name = "pydantic-ai-slim" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/06/7f/3c5463d7b6170d332d917077e821294422e7da1d674546a1e86eda56987c/pydantic_ai_todo-0.1.6.tar.gz", hash = "sha256:d6fcf2b875c13b0a2843a10a37d38a3f1cd9b43266419cf51b39e613d791467b", size = 94271, upload-time = "2026-02-03T14:51:21.792Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/04/97/75e8ab98aed3611571650f79aefe30cf78c002ad75e2c5d63a76d87839f1/pydantic_ai_todo-0.1.10.tar.gz", hash = "sha256:c3423add05263e56fe25e0af78f9d74735e71b8d6a14f912767b9bc93e6f21f0", size = 102617, upload-time = "2026-02-26T23:59:32.711Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e6/70/5c059f9af91a84efce962bcb1c7f0506d015fbc242c36cc8def5d4b79d53/pydantic_ai_todo-0.1.6-py3-none-any.whl", hash = "sha256:8bed7a5ecf27fa957786261f88f01855cb3d2fc112c98fe24c76ec503d93743f", size = 19323, upload-time = "2026-02-03T14:51:18.612Z" },
+    { url = "https://files.pythonhosted.org/packages/16/cb/39ea2187da05382f38205b9b51ab649e82fd4ef06bb45a516acad911cdf1/pydantic_ai_todo-0.1.10-py3-none-any.whl", hash = "sha256:581a2f19b1fde7fed68584bdee6e6bef990f1691e06b3ade49e9c8b9e4e7680a", size = 21443, upload-time = "2026-02-26T23:59:30.592Z" },
 ]
 
 [[package]]
@@ -4353,6 +4396,84 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/1f/f2/f11dd73284122713f5f89fc940f370d035fa8e1e078d446b3313955157fe/pydantic_core-2.41.5-pp311-pypy311_pp73-musllinux_1_1_armv7l.whl", hash = "sha256:a668ce24de96165bb239160b3d854943128f4334822900534f2fe947930e5770", size = 2330317, upload-time = "2025-11-04T13:43:40.406Z" },
     { url = "https://files.pythonhosted.org/packages/88/9d/b06ca6acfe4abb296110fb1273a4d848a0bfb2ff65f3ee92127b3244e16b/pydantic_core-2.41.5-pp311-pypy311_pp73-musllinux_1_1_x86_64.whl", hash = "sha256:f14f8f046c14563f8eb3f45f499cc658ab8d10072961e07225e507adb700e93f", size = 2316992, upload-time = "2025-11-04T13:43:43.602Z" },
     { url = "https://files.pythonhosted.org/packages/36/c7/cfc8e811f061c841d7990b0201912c3556bfeb99cdcb7ed24adc8d6f8704/pydantic_core-2.41.5-pp311-pypy311_pp73-win_amd64.whl", hash = "sha256:56121965f7a4dc965bff783d70b907ddf3d57f6eba29b6d2e5dabfaf07799c51", size = 2145302, upload-time = "2025-11-04T13:43:46.64Z" },
+]
+
+[[package]]
+name = "pydantic-deep"
+version = "0.2.21"
+source = { editable = "pydantic-deepagents" }
+dependencies = [
+    { name = "chardet" },
+    { name = "litellm" },
+    { name = "pydantic" },
+    { name = "pydantic-ai-backend", extra = ["console"] },
+    { name = "pydantic-ai-middleware" },
+    { name = "pydantic-ai-slim" },
+    { name = "pydantic-ai-todo" },
+    { name = "subagents-pydantic-ai" },
+    { name = "summarization-pydantic-ai", extra = ["hybrid"] },
+]
+
+[package.optional-dependencies]
+cli = [
+    { name = "prompt-toolkit" },
+    { name = "python-dotenv" },
+    { name = "rich" },
+    { name = "typer" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "chardet", specifier = ">=5.0.0" },
+    { name = "datasets", marker = "extra == 'swebench'", specifier = ">=2.0" },
+    { name = "fastapi", marker = "extra == 'web'", specifier = ">=0.125.0" },
+    { name = "litellm", specifier = "==1.82.0" },
+    { name = "logfire", marker = "extra == 'logfire'", specifier = ">=4.0" },
+    { name = "markdownify", marker = "extra == 'web-tools'", specifier = ">=0.13.0" },
+    { name = "prompt-toolkit", marker = "extra == 'cli'", specifier = ">=3.0.0" },
+    { name = "pydantic", specifier = ">=2.0" },
+    { name = "pydantic-ai-backend", extras = ["console"], specifier = ">=0.1.14" },
+    { name = "pydantic-ai-backend", extras = ["docker"], marker = "extra == 'sandbox'", specifier = ">=0.1.6" },
+    { name = "pydantic-ai-middleware", specifier = ">=0.2.4" },
+    { name = "pydantic-ai-slim", specifier = ">=0.1.0" },
+    { name = "pydantic-ai-todo", specifier = ">=0.1.9" },
+    { name = "pydantic-deep", extras = ["sandbox", "cli", "web", "web-tools", "yaml", "logfire"], marker = "extra == 'all'" },
+    { name = "python-dotenv", marker = "extra == 'cli'", specifier = ">=1.0.0" },
+    { name = "python-multipart", marker = "extra == 'web'", specifier = ">=0.0.21" },
+    { name = "pyyaml", marker = "extra == 'yaml'", specifier = ">=6.0" },
+    { name = "requests", marker = "extra == 'web-tools'", specifier = ">=2.28.0" },
+    { name = "rich", marker = "extra == 'cli'", specifier = ">=13.0.0" },
+    { name = "subagents-pydantic-ai", specifier = ">=0.0.8" },
+    { name = "summarization-pydantic-ai", extras = ["hybrid"], specifier = ">=0.0.4" },
+    { name = "swebench", marker = "extra == 'swebench'", specifier = ">=2.0" },
+    { name = "tavily-python", marker = "extra == 'web-tools'", specifier = ">=0.5.0" },
+    { name = "tomli", marker = "python_full_version < '3.11' and extra == 'cli'", specifier = ">=2.0" },
+    { name = "typer", marker = "extra == 'cli'", specifier = ">=0.12.0" },
+    { name = "uvicorn", marker = "extra == 'web'", specifier = ">=0.38.0" },
+]
+provides-extras = ["sandbox", "yaml", "cli", "web", "logfire", "web-tools", "swebench", "all"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "build", specifier = ">=1.3.0" },
+    { name = "coverage", specifier = ">=7.0.0" },
+    { name = "pre-commit", specifier = ">=4.5.1" },
+    { name = "pydantic-deep", extras = ["all"] },
+    { name = "pytest", specifier = ">=9.0.0" },
+    { name = "pytest-asyncio", specifier = ">=0.23.0" },
+    { name = "twine", specifier = ">=6.2.0" },
+]
+docs = [
+    { name = "mkdocs", specifier = ">=1.6.0" },
+    { name = "mkdocs-llmstxt", specifier = ">=0.2.0" },
+    { name = "mkdocs-material", specifier = ">=9.5.0" },
+    { name = "mkdocstrings", specifier = ">=0.26.0" },
+    { name = "mkdocstrings-python", specifier = ">=1.12.0" },
+]
+lint = [
+    { name = "mypy", specifier = ">=1.0.0" },
+    { name = "pyright", specifier = ">=1.1.0" },
+    { name = "ruff", specifier = ">=0.8.0" },
 ]
 
 [[package]]
@@ -5418,6 +5539,36 @@ wheels = [
 ]
 
 [[package]]
+name = "subagents-pydantic-ai"
+version = "0.0.8"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "pydantic-ai-slim" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/3f/0c/b2e0c47fc9387f9d839bf5f619a1d529a80411cff56fc504fec9bd48e2af/subagents_pydantic_ai-0.0.8.tar.gz", hash = "sha256:abf8d4d202636c5bcfa118b57e6fc66bdb79267bc8faa559580c822c77a02250", size = 156914, upload-time = "2026-03-06T00:17:18.105Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/bc/ef/8267df4de2ce6b4790fa98b32983ced2b0e98a090e5a271ae51d0415350e/subagents_pydantic_ai-0.0.8-py3-none-any.whl", hash = "sha256:7d6dc7fdd999c657afa24fd599c66717b4b12c97352b0973a934674c8dee9e77", size = 31000, upload-time = "2026-03-06T00:17:16.861Z" },
+]
+
+[[package]]
+name = "summarization-pydantic-ai"
+version = "0.0.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pydantic-ai-slim" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/fc/cb/677084c8345dc11380b5897566c97e5aa186652aafeb75d747e559692c7b/summarization_pydantic_ai-0.0.5.tar.gz", hash = "sha256:68a05340e789bd9cc8911b9063e9ae5142622f0baa10337f1504ee306fd0f9d8", size = 306670, upload-time = "2026-03-21T02:54:20.437Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2a/c2/765f416bfff235238b785c7280771193c734d39cf6e4d4494473f94df3cc/summarization_pydantic_ai-0.0.5-py3-none-any.whl", hash = "sha256:b6dbd58057a780daf9c2da5497295809ea1a4978804449f5779ba47b92cbcc48", size = 28619, upload-time = "2026-03-21T02:54:19.065Z" },
+]
+
+[package.optional-dependencies]
+hybrid = [
+    { name = "pydantic-ai-middleware" },
+]
+
+[[package]]
 name = "sympy"
 version = "1.14.0"
 source = { registry = "https://pypi.org/simple" }
@@ -6055,6 +6206,18 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/bd/95/615e72cd27b85b61eec764a5ca51bd94d40b5adea5ff47567d9ebc4d275a/watchfiles-1.1.1-pp311-pypy311_pp73-macosx_11_0_arm64.whl", hash = "sha256:89eef07eee5e9d1fda06e38822ad167a044153457e6fd997f8a858ab7564a336", size = 396117, upload-time = "2025-10-14T15:06:11.28Z" },
     { url = "https://files.pythonhosted.org/packages/c9/81/e7fe958ce8a7fb5c73cc9fb07f5aeaf755e6aa72498c57d760af760c91f8/watchfiles-1.1.1-pp311-pypy311_pp73-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:ce19e06cbda693e9e7686358af9cd6f5d61312ab8b00488bc36f5aabbaf77e24", size = 450493, upload-time = "2025-10-14T15:06:12.321Z" },
     { url = "https://files.pythonhosted.org/packages/6e/d4/ed38dd3b1767193de971e694aa544356e63353c33a85d948166b5ff58b9e/watchfiles-1.1.1-pp311-pypy311_pp73-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:3e6f39af2eab0118338902798b5aa6664f46ff66bc0280de76fca67a7f262a49", size = 457546, upload-time = "2025-10-14T15:06:13.372Z" },
+]
+
+[[package]]
+name = "wcmatch"
+version = "10.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "bracex" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/79/3e/c0bdc27cf06f4e47680bd5803a07cb3dfd17de84cde92dd217dcb9e05253/wcmatch-10.1.tar.gz", hash = "sha256:f11f94208c8c8484a16f4f48638a85d771d9513f4ab3f37595978801cb9465af", size = 117421, upload-time = "2025-06-22T19:14:02.49Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/eb/d8/0d1d2e9d3fabcf5d6840362adcf05f8cf3cd06a73358140c3a97189238ae/wcmatch-10.1-py3-none-any.whl", hash = "sha256:5848ace7dbb0476e5e55ab63c6bbd529745089343427caa5537f230cc01beb8a", size = 39854, upload-time = "2025-06-22T19:14:00.978Z" },
 ]
 
 [[package]]

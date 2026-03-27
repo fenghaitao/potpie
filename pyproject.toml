@@ -46,6 +46,7 @@ dependencies = [
     "grpcio-tools>=1.62.0",
     "psycopg-binary>=3.2.12",
     "pydantic-ai>=1.56.0",
+    "pydantic-deep[cli]",
     "pydantic-ai-skills>=0.5.1",
     "pydantic-ai-todo>=0.1.6",
     "github-copilot-sdk>=0.1.29",
@@ -78,6 +79,9 @@ dependencies = [
 
 [project.scripts]
 potpie-cli = "potpie_cli:cli"
+
+[tool.uv.sources]
+pydantic-deep = { path = "pydantic-deepagents", editable = true }
 
 [dependency-groups]
 cli = [

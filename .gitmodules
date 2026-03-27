@@ -5,3 +5,6 @@
 [submodule "singularity/singularity-compose"]
 	path = singularity/singularity-compose
 	url = https://github.com/fenghaitao/singularity-compose
+[submodule "pydantic-deepagents"]
+	path = pydantic-deepagents
+	url = https://github.com/intel-sandbox/pydantic-deepagents
