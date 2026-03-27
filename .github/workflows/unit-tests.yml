@@ -28,6 +28,28 @@ jobs:
       UV_LINK_MODE: copy
 
     steps:
+      - name: Stop backend before clean checkout
+        # actions/checkout --clean deletes workspace files.  If gunicorn or celery
+        # from a previous CI run are still running with open file handles inside
+        # the workspace, NFS creates ".nfs*" silly-rename placeholder files that
+        # can't be removed while the processes are alive, causing checkout to fail.
+        # Stop the backend here (before the workspace is wiped) to release handles.
+        run: |
+          # Graceful stop via stop.sh if present from a previous checkout.
+          if [ -f singularity/stop.sh ]; then
+            bash singularity/stop.sh --force 2>/dev/null || true
+          fi
+          # Fallback: kill any gunicorn/celery with open handles in this workspace.
+          pkill -f "${GITHUB_WORKSPACE}/.venv/bin/gunicorn" 2>/dev/null || true
+          pkill -f "${GITHUB_WORKSPACE}/.venv/bin/celery"   2>/dev/null || true
+          # Remove the singularity-compose venv that survives inside the submodule
+          # directory: git clean -ffdx does not recurse into submodule dirs, so the
+          # stale .venv would persist across checkouts and cause up.sh to try (and
+          # fail) to install from an empty submodule directory.
+          rm -rf singularity/singularity-compose/.venv
+          # Allow OS/NFS to release file handles before checkout wipes the directory.
+          sleep 3
+
       - name: Checkout code
         uses: actions/checkout@v4
 
@@ -90,10 +112,96 @@ jobs:
           PYTHONDONTWRITEBYTECODE: "1"
           ENABLE_MULTI_AGENT: "false"
 
+      - name: Ensure backend services are healthy
+        # Check Discovery Server, Postgres, Redis, Neo4j, and API.
+        # If any service is down, call singularity/start.sh which is idempotent:
+        #   - all healthy  → exits in seconds (reuses existing session)
+        #   - some are down → restarts Singularity containers and re-registers
+        #   - nothing running → full cold start
+        run: |
+          set -euo pipefail
+          _port_open() { (echo >/dev/tcp/127.0.0.1/"$1") >/dev/null 2>&1; }
+
+          SESSION_KEY="${USER}@$(hostname -s)"
+          DISCO_FILE=".potpie-sessions/${SESSION_KEY}.discovery"
+          DISCO_PORT=""; DISCO_PID=""; SESSION_INFO=""
+
+          if [ -f "$DISCO_FILE" ]; then
+            DISCO_PORT=$(python3 -c "import json; print(json.load(open('$DISCO_FILE'))['port'])" 2>/dev/null || true)
+            DISCO_PID=$(python3  -c "import json; print(json.load(open('$DISCO_FILE'))['pid'])"  2>/dev/null || true)
+          fi
+
+          # Discovery Server alive only if its PID exists AND HTTP health responds.
+          DISCO_OK=false
+          if [ -n "$DISCO_PORT" ] && [ -n "$DISCO_PID" ] && kill -0 "$DISCO_PID" 2>/dev/null; then
+            curl -sf "http://127.0.0.1:${DISCO_PORT}/health" >/dev/null 2>&1 && DISCO_OK=true
+          fi
+
+          if $DISCO_OK; then
+            SESSION_INFO=$(curl -sf "http://127.0.0.1:${DISCO_PORT}/session/${SESSION_KEY}" 2>/dev/null || true)
+          fi
+
+          SERVICES_HEALTHY=false
+          if [ -n "$SESSION_INFO" ]; then
+            REDIS_PORT=$(python3 -c "import json,sys; print(json.loads(sys.argv[1])['ports']['redis'])"      "$SESSION_INFO" 2>/dev/null || true)
+            PG_PORT=$(python3    -c "import json,sys; print(json.loads(sys.argv[1])['ports']['postgres'])"   "$SESSION_INFO" 2>/dev/null || true)
+            BOLT_PORT=$(python3  -c "import json,sys; print(json.loads(sys.argv[1])['ports']['neo4j_bolt'])" "$SESSION_INFO" 2>/dev/null || true)
+            API_PORT=$(python3   -c "import json,sys; print(json.loads(sys.argv[1])['ports']['api'])"        "$SESSION_INFO" 2>/dev/null || true)
+
+            REDIS_OK=false; PG_OK=false; NEO4J_OK=false; API_OK=false
+            _port_open "${REDIS_PORT}"  && REDIS_OK=true  || true
+            _port_open "${PG_PORT}"     && PG_OK=true     || true
+            _port_open "${BOLT_PORT}"   && NEO4J_OK=true  || true
+            curl -sf "http://localhost:${API_PORT}/health" >/dev/null 2>&1 && API_OK=true || true
+
+            echo "Service health check:"
+            echo "  Discovery Server (pid ${DISCO_PID}, port ${DISCO_PORT}): OK"
+            echo "  Postgres  port ${PG_PORT}     : ${PG_OK}"
+            echo "  Redis     port ${REDIS_PORT}  : ${REDIS_OK}"
+            echo "  Neo4j bolt port ${BOLT_PORT}  : ${NEO4J_OK}"
+            echo "  API       port ${API_PORT}    : ${API_OK}"
+
+            if $REDIS_OK && $PG_OK && $NEO4J_OK && $API_OK; then
+              SERVICES_HEALTHY=true
+            fi
+          else
+            echo "Discovery Server not reachable or no active session."
+          fi
+
+          if $SERVICES_HEALTHY; then
+            echo "All backend services are healthy — skipping start."
+          else
+            echo "One or more services are unhealthy. Running singularity/start.sh ..."
+            bash singularity/start.sh
+          fi
+
       - name: Run integration tests
         # Ideally we should run all tests under integration tests folder,
-        # currently only run the below test
+        # currently only run the below test.
+        #
+        # The self-hosted runner has a persistent Potpie backend (started by the
+        # preceding health-check step) whose dynamically allocated ports are tracked
+        # by the Discovery Server.  Read those ports before running pytest so that
+        # celery_app and alembic connect to the right endpoints.
         run: |
+          # Export dynamic service ports from the active Discovery Server session.
+          SESSION_KEY="${USER}@$(hostname -s)"
+          DISCO_FILE=".potpie-sessions/${SESSION_KEY}.discovery"
+          DISCO_PORT=$(python3 -c "import json; print(json.load(open('$DISCO_FILE'))['port'])" 2>/dev/null || true)
+          if [ -n "$DISCO_PORT" ]; then
+            SESSION_INFO=$(curl -sf "http://127.0.0.1:${DISCO_PORT}/session/${SESSION_KEY}" 2>/dev/null || true)
+          fi
+          if [ -n "$SESSION_INFO" ]; then
+            export POSTGRES_SERVER=$(python3 -c "import json,sys; print(json.loads(sys.argv[1])['postgres_server'])" "$SESSION_INFO" 2>/dev/null || true)
+            export REDIS_URL=$(python3       -c "import json,sys; print(json.loads(sys.argv[1])['redis_url'])"        "$SESSION_INFO" 2>/dev/null || true)
+            export NEO4J_URI=$(python3       -c "import json,sys; print(json.loads(sys.argv[1])['neo4j_uri'])"        "$SESSION_INFO" 2>/dev/null || true)
+            export API_PORT=$(python3        -c "import json,sys; print(json.loads(sys.argv[1])['ports']['api'])"     "$SESSION_INFO" 2>/dev/null || true)
+            echo "Integration test ports — postgres: $(python3 -c "import json,sys; print(json.loads(sys.argv[1])['ports']['postgres'])" "$SESSION_INFO" 2>/dev/null), redis: $(python3 -c "import json,sys; print(json.loads(sys.argv[1])['ports']['redis'])" "$SESSION_INFO" 2>/dev/null), neo4j_bolt: $(python3 -c "import json,sys; print(json.loads(sys.argv[1])['ports']['neo4j_bolt'])" "$SESSION_INFO" 2>/dev/null), api: ${API_PORT}"
+          else
+            echo "ERROR: Could not retrieve session info from Discovery Server. Backend may not have started correctly."
+            exit 1
+          fi
+
           uv run pytest tests/integration-tests/test_dmlc_wiki.py \
             -v -s \
             --tb=short \

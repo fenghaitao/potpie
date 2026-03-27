@@ -37,7 +37,7 @@ from app.modules.utils.posthog_helper import PostHogClient
 
 logger = setup_logger(__name__)
 
-load_dotenv(override=True)
+load_dotenv(override=False)
 
 
 class ParsingController:

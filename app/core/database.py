@@ -7,7 +7,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, AsyncEngine
 from sqlalchemy.pool import NullPool
 
-load_dotenv(override=True)
+load_dotenv(override=False)
 
 # Create engine with connection pooling and best practices
 engine = create_engine(

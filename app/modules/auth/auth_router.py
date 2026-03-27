@@ -40,7 +40,7 @@ from app.modules.utils.email_helper import is_personal_email_domain
 SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", None)
 
 auth_router = APIRouter()
-load_dotenv(override=True)
+load_dotenv(override=False)
 
 
 def _signup_response_with_custom_token(payload: dict) -> dict:

@@ -9,3 +9,6 @@ resolv.conf
 potpie-data/**
 !potpie-data/**/
 !potpie-data/**/.gitignore
+
+# Per-user session files (dynamic port allocations written by start.sh)
+../.potpie-sessions/

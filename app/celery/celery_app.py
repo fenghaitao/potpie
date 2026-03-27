@@ -23,18 +23,22 @@ load_dotenv()
 configure_logging()
 logger = setup_logger(__name__)
 
-# Redis configuration
-redishost = os.getenv("REDISHOST", "localhost")
-redisport = int(os.getenv("REDISPORT", 6379))
-redisuser = os.getenv("REDISUSER", "")
-redispassword = os.getenv("REDISPASSWORD", "")
 queue_name = os.getenv("CELERY_QUEUE_NAME", "staging")
 
-# Construct the Redis URL
-if redisuser and redispassword:
-    redis_url = f"redis://{redisuser}:{redispassword}@{redishost}:{redisport}/0"
-else:
-    redis_url = f"redis://{redishost}:{redisport}/0"
+# Use a pre-built REDIS_URL when available (exported by singularity/start.sh with
+# the dynamically allocated port, or set by the Discovery Client in test conftest).
+# Fall back to constructing the URL from individual REDISHOST / REDISPORT vars so
+# that standalone dev environments (without start.sh) continue to work unchanged.
+redis_url = os.getenv("REDIS_URL", "")
+if not redis_url:
+    redishost = os.getenv("REDISHOST", "localhost")
+    redisport = int(os.getenv("REDISPORT", 6379))
+    redisuser = os.getenv("REDISUSER", "")
+    redispassword = os.getenv("REDISPASSWORD", "")
+    if redisuser and redispassword:
+        redis_url = f"redis://{redisuser}:{redispassword}@{redishost}:{redisport}/0"
+    else:
+        redis_url = f"redis://{redishost}:{redisport}/0"
 
 
 def sanitize_redis_url(url: str) -> str:

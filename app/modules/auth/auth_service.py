@@ -8,7 +8,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from firebase_admin import auth
 from firebase_admin.exceptions import FirebaseError
 
-load_dotenv(override=True)
+load_dotenv(override=False)
 
 
 class AuthService:

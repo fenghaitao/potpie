@@ -8,7 +8,7 @@ os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 # Load .env before any app imports so modules that read env at import time (e.g. tunnel service) see it
 from dotenv import load_dotenv
 
-load_dotenv(override=True)
+load_dotenv(override=False)
 
 import sentry_sdk
 from fastapi import FastAPI

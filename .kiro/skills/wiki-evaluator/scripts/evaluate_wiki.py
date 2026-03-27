@@ -49,7 +49,8 @@ _SCRIPT_DIR = Path(__file__).parent.resolve()
 _MODULES_PATH = _SCRIPT_DIR / "wiki-evaluator-modules"
 _REPO_ROOT = _SCRIPT_DIR.parents[3]  # <repo>/.kiro/skills/wiki-evaluator/scripts/
 
-for _p in [str(_MODULES_PATH), str(_SCRIPT_DIR), str(_REPO_ROOT)]:
+for _p in [str(_MODULES_PATH), str(_SCRIPT_DIR), str(_REPO_ROOT),
+           str(_REPO_ROOT / ".kiro" / "runtime")]:
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
@@ -61,6 +62,9 @@ if _ENV_FILE.exists():
         load_dotenv(_ENV_FILE, override=False)
     except ImportError:
         pass
+
+from session_ports import apply_session_ports  # .kiro/runtime/session_ports
+apply_session_ports(_REPO_ROOT)
 
 # ---------------------------------------------------------------------------
 # Module-level imports for skill modules (allows patching in tests)

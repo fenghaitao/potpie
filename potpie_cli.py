@@ -18,6 +18,101 @@ from typing import Any, Optional
 from dotenv import load_dotenv
 load_dotenv(override=True)
 
+# Ensure backend services are running and apply their dynamic port assignments
+# to env vars before any potpie import reads them.  Auto-starts the backend via
+# singularity/start.sh when the Discovery Server is not running.
+def _apply_session_ports() -> None:
+    """Ensure backend is running and inject its port assignments into os.environ.
+
+    Queries the Discovery Server REST API for the current user@host session.
+    If the Discovery Server is not running, invokes singularity/start.sh to
+    start it, then retries.  Falls back to .env defaults if start.sh fails.
+    """
+    import json as _json
+    import socket as _socket
+    import subprocess as _sp
+    import urllib.request as _ur
+
+    _repo_root = Path(__file__).parent
+    _user = os.environ.get("USER") or os.environ.get("LOGNAME", "")
+    if not _user:
+        return
+    try:
+        _host = _socket.gethostname().split(".")[0]
+    except Exception:
+        _host = "localhost"
+    _session_key = f"{_user}@{_host}"
+    _disco_file = _repo_root / ".potpie-sessions" / f"{_session_key}.discovery"
+
+    def _http_get(url):
+        try:
+            with _ur.urlopen(url, timeout=5) as resp:
+                return _json.loads(resp.read())
+        except Exception:
+            return None
+
+    def _apply_from_session(s):
+        if s.get("postgres_server"):
+            os.environ["POSTGRES_SERVER"] = s["postgres_server"]
+        if s.get("neo4j_uri"):
+            os.environ["NEO4J_URI"] = s["neo4j_uri"]
+        if s.get("redis_url"):
+            os.environ["REDIS_URL"] = s["redis_url"]
+        redis_port = (s.get("ports") or {}).get("redis")
+        if redis_port:
+            os.environ["REDISPORT"] = str(redis_port)
+
+    def _start_backend():
+        _sh = _repo_root / "singularity" / "start.sh"
+        if not _sh.exists():
+            print("[potpie] singularity/start.sh not found -- cannot auto-start backend",
+                  file=sys.stderr)
+            return
+        print("[potpie] Starting backend services via singularity/start.sh ...",
+              file=sys.stderr)
+        _sp.run(["bash", str(_sh)], cwd=str(_repo_root))
+
+    def _get_discovery_port():
+        if not _disco_file.exists():
+            return None
+        try:
+            meta = _json.loads(_disco_file.read_text())
+            port = meta.get("port")
+            pid  = meta.get("pid")
+            if not port or not pid:
+                return None
+            os.kill(pid, 0)  # raises if PID gone
+            return port
+        except Exception:
+            return None
+
+    # ── Query Discovery Server ────────────────────────────────────────────────
+    port = _get_discovery_port()
+    if port is None:
+        print("[potpie] Discovery Server not running -- starting backend...", file=sys.stderr)
+        _start_backend()
+        port = _get_discovery_port()
+
+    if port is None:
+        return  # fall back to .env defaults
+
+    session = _http_get(f"http://127.0.0.1:{port}/session/{_session_key}")
+    if session is None:
+        print("[potpie] Session not found in Discovery Server -- starting backend...",
+              file=sys.stderr)
+        _start_backend()
+        port = _get_discovery_port()
+        if port is None:
+            return
+        session = _http_get(f"http://127.0.0.1:{port}/session/{_session_key}")
+
+    if session is None:
+        return  # fall back to .env defaults
+
+    _apply_from_session(session)
+
+_apply_session_ports()
+
 import click
 from rich.console import Console
 from rich.markdown import Markdown

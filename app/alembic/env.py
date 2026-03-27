@@ -11,8 +11,11 @@ from app.core.base_model import Base
 from app.core.models import *  # noqa
 
 target_metadata = Base.metadata
-# Load environment variables from .env
-load_dotenv(override=True)
+# Load environment variables from .env.
+# override=False so that variables already exported in the shell (e.g. the
+# dynamically allocated POSTGRES_SERVER set by singularity/start.sh) take
+# precedence over the static values stored in .env.
+load_dotenv(override=False)
 
 # Interpret the config file for Python logging.
 fileConfig(context.config.config_file_name)

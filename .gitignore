@@ -8,6 +8,7 @@ cli/dist
 cli/.venv
 venv/
 .env
+.potpie-sessions/
 *.json
 .momentum
 db

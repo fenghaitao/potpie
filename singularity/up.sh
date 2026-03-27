@@ -18,17 +18,42 @@ if [ -z "$SINGULARITY_TMPDIR" ] || [ ! -d "$SINGULARITY_TMPDIR" ]; then
 fi
 unset TMPDIR
 
+# NEO4J_URI, NEO4J_USERNAME and NEO4J_PASSWORD are application-level variables
+# (bolt connection string and app credentials used by gunicorn/celery).
+# Do NOT pass them into Singularity containers: the neo4j Docker image
+# translates every NEO4J_* env var into a neo4j.conf setting, so these would
+# become the unrecognized keys URI / USERNAME / PASSWORD and fail validation.
+# Container-specific settings (auth, plugins, listen addresses) are set
+# exclusively via singularity/env/neo4j.sh (/.singularity.d/env/).
+unset NEO4J_URI NEO4J_USERNAME NEO4J_PASSWORD
+
 # Bootstrap singularity-compose venv on first use
 if [ ! -x "$SINGULARITY_COMPOSE" ]; then
     echo "Setting up singularity-compose venv..."
     uv venv singularity-compose/.venv
-    uv pip install --python singularity-compose/.venv/bin/python -e singularity-compose/
+    if [ -f singularity-compose/setup.py ] || [ -f singularity-compose/pyproject.toml ]; then
+        # Submodule is initialized — install from local source (editable install).
+        uv pip install --python singularity-compose/.venv/bin/python -e singularity-compose/
+    else
+        # Submodule not available (network restricted runner or not initialized).
+        # Fall back to the published PyPI release which is functionally equivalent.
+        echo "singularity-compose submodule not initialized — installing from PyPI"
+        uv pip install --python singularity-compose/.venv/bin/python singularity-compose
+    fi
 fi
 
 export POSTGRES_PORT=${POSTGRES_PORT:-5432}
 export REDIS_PORT=${REDIS_PORT:-6379}
 export SNG_NEO4J_BOLT_PORT=${SNG_NEO4J_BOLT_PORT:-7687}
 export SNG_NEO4J_HTTP_PORT=${SNG_NEO4J_HTTP_PORT:-7474}
+
+# Singularity requires the SINGULARITYENV_ prefix to reliably propagate host
+# environment variables into container instances.  Export them here so that
+# the env/ env scripts (e.g. env/neo4j.sh) see the correct dynamic ports.
+export SINGULARITYENV_SNG_NEO4J_BOLT_PORT="$SNG_NEO4J_BOLT_PORT"
+export SINGULARITYENV_SNG_NEO4J_HTTP_PORT="$SNG_NEO4J_HTTP_PORT"
+export SINGULARITYENV_POSTGRES_PORT="$POSTGRES_PORT"
+export SINGULARITYENV_REDIS_PORT="$REDIS_PORT"
 
 echo "Starting services:"
 echo "  postgres  -> :${POSTGRES_PORT}"

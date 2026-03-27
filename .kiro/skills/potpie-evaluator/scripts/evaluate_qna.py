@@ -35,7 +35,8 @@ _SCRIPT_DIR = Path(__file__).parent.resolve()
 _SCORING_PATH = _SCRIPT_DIR / "deepeval-scoring"
 _REPO_ROOT = _SCRIPT_DIR.parents[3]  # <repo>/.kiro/skills/potpie-evaluator/scripts/
 
-for _p in [str(_SCORING_PATH), str(_SCORING_PATH / "evaluators"), str(_REPO_ROOT)]:
+for _p in [str(_SCORING_PATH), str(_SCORING_PATH / "evaluators"), str(_REPO_ROOT),
+           str(_REPO_ROOT / ".kiro" / "runtime")]:
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
@@ -47,6 +48,9 @@ if _ENV_FILE.exists():
         load_dotenv(_ENV_FILE, override=False)
     except ImportError:
         pass
+
+from session_ports import apply_session_ports  # .kiro/runtime/session_ports
+apply_session_ports(_REPO_ROOT)
 
 
 def load_questions(cases_file: str) -> list:
