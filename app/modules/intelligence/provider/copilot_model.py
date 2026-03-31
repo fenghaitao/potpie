@@ -29,7 +29,7 @@ import asyncio
 import json
 import shutil
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Optional
 
 from pydantic_ai._utils import now_utc
@@ -62,7 +62,54 @@ except ImportError as e:
 
 logger = setup_logger(__name__)
 
-__all__ = ("CopilotModel",)
+__all__ = ("CopilotModel", "set_copilot_session_log")
+
+# ---------------------------------------------------------------------------
+# Session log — dumps every Copilot SDK request+response to a file.
+# Call set_copilot_session_log(path) once before running the evaluator.
+# ---------------------------------------------------------------------------
+
+_session_log = None  # file handle; None means disabled
+
+
+def set_copilot_session_log(path: str) -> None:
+    """Open *path* (append mode) and record all Copilot SDK call I/O to it."""
+    global _session_log
+    _session_log = open(path, "a", encoding="utf-8", buffering=1)  # line-buffered
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    _session_log.write(f"\n{'='*80}\n[COPILOT SESSION] {ts}\n{'='*80}\n")
+
+
+def _slog(msg: str) -> None:
+    if _session_log is not None:
+        _session_log.write(msg + "\n")
+
+
+def _slog_request(
+    call_type: str,
+    model_name: str,
+    system_prompt: str | None,
+    user_prompt: str,
+    response_text: str | None = None,
+    error: BaseException | None = None,
+) -> None:
+    """Write a structured request/response block to the session log."""
+    if _session_log is None:
+        return
+    sep = "-" * 60
+    _slog(f"\n{sep}")
+    _slog(f"[{call_type}] model={model_name}")
+    if system_prompt:
+        _slog(f"  system_prompt: {system_prompt[:400]}")
+    _slog(f"  user_prompt ({len(user_prompt)} chars): {user_prompt[:800]}")
+    if error is not None:
+        _slog(f"  ERROR: {type(error).__name__}: {error}")
+    elif response_text is not None:
+        _slog(f"  response ({len(response_text)} chars): {response_text[:800]}")
+    else:
+        _slog("  response: <streaming — accumulated text logged at turn end>")
+    _slog(sep)
+
 
 # Default timeout for a full turn (seconds)
 _DEFAULT_TIMEOUT = 300.0
@@ -305,11 +352,15 @@ class CopilotModel(Model):
             effective_timeout = model_settings.get("copilot_timeout", effective_timeout)
 
         session = await self._create_session(system_prompt)
+        event = None
         try:
             event = await session.send_and_wait(
                 {"prompt": user_prompt},
                 timeout=effective_timeout,
             )
+        except Exception as e:
+            _slog_request("request", self._model_name_str, system_prompt, user_prompt, error=e)
+            raise
         finally:
             try:
                 await session.destroy()
@@ -322,6 +373,8 @@ class CopilotModel(Model):
 
         if not content:
             logger.warning("CopilotModel.request: empty response from Copilot SDK")
+
+        _slog_request("request", self._model_name_str, system_prompt, user_prompt, response_text=content)
 
         parts: list[ModelResponsePart] = []
         if model_request_parameters.output_tools and content:
@@ -383,10 +436,11 @@ class CopilotModel(Model):
 
         async def _stream_generator() -> AsyncIterator[Any]:
             """Yield TextPart chunks from the Copilot event stream."""
+            accumulated = ""
+            _error_logged = False
             try:
                 await session.send({"prompt": user_prompt})
 
-                accumulated = ""
                 while True:
                     try:
                         event = await asyncio.wait_for(
@@ -417,6 +471,7 @@ class CopilotModel(Model):
                         # Non-delta full message (fallback for non-streaming models)
                         content = (event.data.content or "") if event.data else ""
                         if content and not accumulated:
+                            accumulated = content
                             yield TextPart(content=content)
                         break
 
@@ -433,9 +488,20 @@ class CopilotModel(Model):
                             if event.data
                             else "unknown"
                         )
-                        raise RuntimeError(f"Copilot session error: {err_msg}")
+                        err = RuntimeError(f"Copilot session error: {err_msg}")
+                        _slog_request("request_stream", self._model_name_str, system_prompt, user_prompt, error=err)
+                        _error_logged = True
+                        raise err
 
+            except Exception as e:
+                if not _error_logged:
+                    _slog_request("request_stream", self._model_name_str, system_prompt, user_prompt, error=e)
+                    _error_logged = True
+                raise
             finally:
+                # Log the successful turn (accumulated response); skip on error (already logged above)
+                if not _error_logged:
+                    _slog_request("request_stream", self._model_name_str, system_prompt, user_prompt, response_text=accumulated)
                 unsubscribe()
                 try:
                     await session.destroy()

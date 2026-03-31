@@ -112,6 +112,21 @@ jobs:
           PYTHONDONTWRITEBYTECODE: "1"
           ENABLE_MULTI_AGENT: "false"
 
+      - name: Run qna-evaluator skill unit tests
+        # Runs the skill's own test suite in isolation (no DB / Redis needed).
+        # Uses --confcutdir to skip the root conftest.py that requires live services,
+        # while still loading the local conftest.py in tests/unit-tests/qna-evaluator/.
+        run: |
+          uv run pytest tests/unit-tests/qna-evaluator/ \
+            -m "not integration" \
+            -v \
+            --tb=short \
+            --confcutdir=tests/unit-tests/qna-evaluator \
+            --junitxml=test-results/junit-qna-evaluator.xml
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+          ENABLE_MULTI_AGENT: "false"
+
       - name: Ensure backend services are healthy
         # Check Discovery Server, Postgres, Redis, Neo4j, and API.
         # If any service is down, call singularity/start.sh which is idempotent:

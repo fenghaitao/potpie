@@ -1,317 +1,163 @@
 # QnA Evaluation Report
 
-**Project**: potpie-qna (project=671a4055-1af0-dd65-3def-556511ad1ea8, 5 cases)
+**Project**: potpie-qna (project=d0aabe11-a5a9-93a4-6211-311606e4865d, 5 cases)
 **Model**: github_copilot/gpt-4o
-**Date**: 2026-03-17 02:35:54
+**Date**: 2026-03-29 18:38:45
 
 ## Overall Score
 
-**86.7%**
+**79.2%**
 
 ### AnswerRelevancy
 
-**Score**: 93.3%  [PASS]
+**Score**: 80.0%  [PASS]
 
 ### Faithfulness
 
-**Score**: 80.0%  [PASS]
+**Score**: 100.0%  [PASS]
+
+### ContextualRelevancy
+
+**Score**: 100.0%  [PASS]
+
+### ContextualPrecision
+
+**Score**: 100.0%  [PASS]
+
+### ContextualRecall
+
+**Score**: 15.8%  [FAIL]
 
 ## Per-Case Results
 
-### Case 1: [PASS] 100%
+### Case 1: [PASS] 83%
 
 **Q**: What is the overall architecture of this codebase?
 
-**A**: The codebase is structured in a modular and layered way, providing tools and functionality for diagnostics, parsing, code generation, and more. Key folders and files exist to address varied purposes. Here's a detailed breakdown:
+**A**: The provided codebase has numerous directories and files that indicate a comprehensive and detailed project structure. Below is an overview of the overall architecture based on the file structure:
 
-### Top-Level Structure
-- **`.github/skills/`**: Contains configurations and skills setup, including `dml-code-evaluator/`, which has scripts, setup files, and configurations like `pyproject.toml` and `pytest.ini`.
-- **Documentation (`doc/`)**:
-  - Includes multiple subdirectories (`1.2/`, `1.4/`) with specific markdown files for deprecations, language notes, limitations, and library specifics.
-  - A structured `toc.json` hints at documentation generation.
-- **`lib/` and `lib-old-4.8/`**: Contain different versions (`1.2`, `1.4`) of licenses, clearly separating old and active libraries.
-- **Source Code (`py/` Directory)**:
-  - Core Python codes reside here, including the main entry file `__main__.py`.
-  - Includes modules like `ai_diagnostics.py`, `generator`, `dmlparse.py`, `ctree.py`, and others related to abstract syntax tree analysis, serialization, and compatibility.
-  - Unit-test files (`*_test.py`) suggest built-in testing for reliability.
-- **Standalone Files for Conversions/Utilities**:
-  - Markdown generation and conversion (e.g., `deprecations_to_md.py`, `provisional_to_md.py`, `grammar_to_md.py`).
-  - Files like `generate_env.py` and `run_dmlc.sh` include potential utilities for environment setup and running compiled processes.
+### 1. **Documentation and Tutorials**
+- Folders like `.deepwiki/` and `.deepwiki-open/` contain extensive documentation files and guides, including:
+  - **Core Concepts**: Objects, templates, traits, methods, attributes, connections, and compiler architecture.
+  - **Key Features**: DML (Device Modeling Language) reference, syntax grammar, type systems, event systems, memory management, and advanced topics.
+  - **Release Notes**: Multiple files document changes for version 1.2, 1.4, and others.
+  - **Guides**: Installation, usage, testing framework, porting details, architecture overviews, and deployment instructions.
+- Files like `README.md`, `QUICKSTART_AI_DIAGNOSTICS.md`, and `SECURITY.md` provide essential high-level overviews.
 
-### Key Features
-1. **AI Diagnostics**:
-   - The `py/dml/ai_diagnostics.py` and `QUICKSTART_AI_DIAGNOSTICS.md` signal diagnostics via machine learning tools or logs.
-2. **Code Parsing and Conversion**:
-   - Several modules (e.g., `dmlparse.py`, `codegen.py`, `dmllex.py`) for parsing and converting Domain Specific Languages (DSLs).
-3. **Testing Frameworks**:
-   - Numerous test files, centralized using `run_unit_tests.py` scripts.
-4. **Version Control**:
-   - Includes explicit handling of versions (`doc/`, `lib-old-4.8/`) for backward compatibility.
+### 2. **Configuration and Build Management**
+- **Configuration files**: `.potpieallowedlang`, `.potpieignore`, `_config.yml`, and `.gitignore` manage project settings.
+- **Build tools**: `Makefile` for building the project.
 
-This codebase has clear modularity for diagnostics, tooling, and documentation generation, making it versatile for AI diagnostics-based applications and parsing.
+### 3. **Libraries and Dependencies**
+- The `lib` folder includes library files for different versions (1.2, 1.4, and older).
+- Includes compatibility for legacy systems in `lib-old-4.8`.
+
+### 4. **Codebase Analysis Tools**
+- Several Python scripts for generating or converting documentation (`generate_env.py`, `grammar_to_md.py`, `md_to_github.py`).
+- Syntax highlighting tools (`syntaxes/Dml.tmlanguage`).
+
+### 5. **Source Code**
+- The Python package (`py/`) is the core of the project, containing:
+  - Modules for DML compilation, code generation, lexing, parsing, backend integration, intermediate representations, and runtime diagnostics.
+  - Detailed unit tests for various components.
+- The `include/` directory holds C header files (`dmllib.h`) for the runtime library.
+
+### 6. **Testing Framework**
+- Test-related files:
+  - Tools for validating markdown links (`validate_md_links.py`).
+  - Scripts for running unit tests (`run_unit_tests.py`).
+  - Diagnostic verification for AI systems (`verify_ai_diagnostics.sh`).
+
+### 7. **AI Integration**
+- The repository refers to integration with AI systems, as seen in documents like `AI_DIAGNOSTICS_README.md` and Python scripts such as `ai_diagnostics.py`.
+
+### 8. **Version-Specific Content**
+- **1.2 Version Files**: Focused on earlier compatibility and features.
+- **1.4 Version Files**: Highlights porting guides, deprecated features, and new improvements.
+
+### 9. **Device Modeling Language (DML)**
+- A significant portion of the project is devoted to a custom language (Device Modeling Language) with files like `dml`, `dmlc.py`, `dmlparser`, `traits`, `symtab`, and others focusing on its design, parsing, and compilation.
+
+### 10. **Testing and Automation**
+- Directory `.qoder/repowiki/en/` and `.repowiki/en/` may manage structured documentation/data in JSON or XML formats, potentially for hierarchical testing or wiki generation.
+  
+---
+The codebase has a combination of:
+- **Documentation modules** for teaching and usage reference.
+- **Core source code** (Python and C headers) focused on a modeling language and AI diagnostics systems.
+- **Test automation and correctness assurance tools**.
+- **Build, deploy, and version compatibility layers**.
+
+Let me know if you'd like more details about any specific layer or file!
 
 **Retrieved Context**:
 
 <details><summary>Chunk 1</summary>
 
 ```
-.github/
-  skills/
-    dml-code-evaluator/
-      SKILL.md
-      pyproject.toml
-      pytest.ini
-      scripts/
-      uv.lock
-.gitignore
-.potpieallowedlang
-.potpieignore
-.qoder/
-  repowiki/
-    en/
-      content/
-      meta/
-AI_DIAGNOSTICS_README.md
-IMPLEMENTATION_SUMMARY.md
-LICENSE
-MODULEINFO
-Makefile
-QUICKSTART_AI_DIAGNOSTICS.md
-README.md
-RELEASENOTES-1.2.md
-RELEASENOTES-1.4.md
-RELEASENOTES.md
-SECURITY.md
-_config.yml
-copy_h.py
-deprecations_to_md.py
-dmlast.py
-dmlcomments_to_md.py
-doc/
-  1.2/
-   ...
+.deepwiki/
+  10_Object_Model.md
+  11_Templates.md
+  12_Traits.md
+  13_Methods_and_Parameters.md
+  14_Standard_Library.md
+  15_Core_Templates_dml-builtins.md
+  16_Utility_Templates.md
+  17_Reset_System.md
+  18_Register_and_Field_Behaviors.md
+  19_Memory-Mapped_I_O.md
+  1_Overview.md
+  20_Attributes_and_Connections.md
+  21_Events_and_Lifecycle.md
+  22_Compiler_Architecture.md
+  23_Compilation_Pipeline.md
+  24_Frontend_Parsing_and_Lexing.md
+  25_Semantic_Analysis.md
+  26_Intermediate_Representation...
 ```
 
 </details>
 
 - AnswerRelevancy: 100% — Average of 3 relevancy rubrics
 - Faithfulness: 100% — Claims grounded in retrieved context
+- ContextualRelevancy: 100% — Fraction of context chunks relevant to the question
+- ContextualPrecision: 100% — Relevant nodes ranked above irrelevant ones (weighted MAP) [reference: agent answer]
+- ContextualRecall: 16% — Fraction of expected-output sentences attributable to context [reference: agent answer]
 
 ### Case 2: [PASS] 100%
 
 **Q**: What is the main entry point of the DML compiler?
 
-**A**: The main entry point of the DML compiler appears to be defined in two files:
-
-1. **`py/__main__.py`**:  
-   - **Docstring**: "Main entry point for the DML compiler script."
-
-2. **`py/dml/dmlc.py`**:  
-   - **Docstring**: "Main entry point for the DML compiler, handling command-line arguments, configuration, and processing of DML files."
-   - This entry point is likely responsible for managing the majority of operations, such as handling command-line arguments, configurations, and the processing of DML files.
-
-If you're looking for the operational entry where most of the functionality is defined, it might be in `py/dml/dmlc.py`. However, `py/__main__.py` serves as a script-level initiation point. Both are related but serve slightly different purposes.
-
-**Retrieved Context**:
-
-<details><summary>Chunk 1</summary>
-
-```
-[[QueryResponse(node_id='2ecfa89a01e640e9f205073e5a8f17f3', docstring='Main entry point for the DML compiler script.', file_path='py/__main__.py', start_line=0, end_line=0, similarity=0.9487943649291992), QueryResponse(node_id='97e4f44c5829158a7b1e740a7027dcb7', docstring='Main entry point for the DML compiler, handling command-line arguments, configuration, and processing of DML files.', file_path='py/dml/dmlc.py', start_line=308, end_line=809, similarity=0.938361406326294), QueryResponse(node_...
-```
-
-</details>
+**A**: The main entry point of the DML compiler is in the file `py/__main__.py`, and its purpose is to execute the main function of the DML compiler.
 
 - AnswerRelevancy: 100% — Average of 3 relevancy rubrics
-- Faithfulness: 100% — Claims grounded in retrieved context
 
-### Case 3: [PASS] 100%
+### Case 3: [PASS] 67%
 
 **Q**: How does the parser work in this project?
 
-**A**: The project includes a parser in the file `py/dml/dmlparse.py`, which is primarily designed for parsing Device Modeling Language (DML) versions 1.2 and 1.4. This parser offers several features and functionalities:
+**A**: Here is an overview of how the parser works in this project:
 
-1. **Overview:**
-   - The parser defines grammar rules, lexer definitions, and production rules to handle DML syntax.
-   - It supports features like precedence rules, bit order parsing, and Abstract Syntax Tree (AST) generation.
+1. **Responsibility of Parser Components:**
+   - A function or module in `"py/dml/dmlparse.py"`, responsible for **parsing object-related statements or parameters**, appears focal opens functionality-based things.
 
-2. **Specific Parsing Functions:**
-   - It parses various object-related statements or parameters.
-   - It handles assignment expressions and other syntactical structures.
+- AnswerRelevancy: 67% — Average of 3 relevancy rubrics
 
-3. **Grammar Management:**
-   - The code includes a `Grammar` class for managing tokens, precedence, and rules within the parsing context.
-
-4. **Debug and Position Tracking:**
-   - Added tracing of additional position information for parser tokens helps in debugging or porting error messages.
-
-This setup makes it possible to parse and work with the structural features of the DML language closely, ensuring accurate modeling and syntax handling. Let me know if you'd like me to dive into the code for a specific part of the parser.
-
-**Retrieved Context**:
-
-<details><summary>Chunk 1</summary>
-
-```
-[[QueryResponse(node_id='8e08f6a614c063af10c71628e4f636ad', docstring='Parses various object-related statements or parameters.', file_path='py/dml/dmlparse.py', start_line=928, end_line=935, similarity=0.8208696842193604), QueryResponse(node_id='2f63d5af40057a7d75704f43b35b67bd', docstring='Parses assignment expressions.', file_path='py/dml/dmlparse.py', start_line=1628, end_line=1630, similarity=0.8177566528320312), QueryResponse(node_id='dc5b829a7c2455facd7455c9a5d1c285', docstring='Defines a ...
-```
-
-</details>
-
-- AnswerRelevancy: 100% — Average of 3 relevancy rubrics
-- Faithfulness: 100% — Claims grounded in retrieved context
-
-### Case 4: [PASS] 50%
+### Case 4: [PASS] 100%
 
 **Q**: What are the main external libraries or dependencies used?
 
-**A**: The project appears to use the following external libraries or dependencies:
+**A**: The project uses a utility for generating a minimal C file for dependency generation, and the node `py/dml/dmlc.py` includes the necessary imports within the code. For a comprehensive list of other libraries or dependencies employed across the project, reviewing package configuration files (e.g., `requirements.txt`, `package.json`, or `pyproject.toml`) or inspecting imports in core files may provide further detail.
 
-1. `ply==3.4` - This is included in the `snyk-requirements.txt`, often used for lexical analysis and parsing.
-
-Let me know if further details are needed!
-
-**Retrieved Context**:
-
-<details><summary>Chunk 1</summary>
-
-```
-.github/
-  skills/
-    dml-code-evaluator/
-      SKILL.md
-      pyproject.toml
-      pytest.ini
-      scripts/
-      uv.lock
-.gitignore
-.potpieallowedlang
-.potpieignore
-.qoder/
-  repowiki/
-    en/
-      content/
-      meta/
-AI_DIAGNOSTICS_README.md
-IMPLEMENTATION_SUMMARY.md
-LICENSE
-MODULEINFO
-Makefile
-QUICKSTART_AI_DIAGNOSTICS.md
-README.md
-RELEASENOTES-1.2.md
-RELEASENOTES-1.4.md
-RELEASENOTES.md
-SECURITY.md
-_config.yml
-copy_h.py
-deprecations_to_md.py
-dmlast.py
-dmlcomments_to_md.py
-doc/
-  1.2/
-   ...
-```
-
-</details>
-
-<details><summary>Chunk 2</summary>
-
-```
-{'success': False, 'error': "File 'snyk-requirements.txt' not found.\n\nChecked:\n1. GitHub repository: File not found (404) - may not be pushed yet\n2. Local workspace: Not available (no tunnel connection)\n\nPossible solutions:\n- If working locally: Ensure the VS Code extension is connected and the file exists in your workspace\n- If expecting from GitHub: Push your changes or verify the file path is correct\n", 'content': None}
-```
-
-</details>
-
-<details><summary>Chunk 3</summary>
-
-```
-{'success': False, 'error': "File 'pyproject.toml' not found.\n\nChecked:\n1. GitHub repository: File not found (404) - may not be pushed yet\n2. Local workspace: Not available (no tunnel connection)\n\nPossible solutions:\n- If working locally: Ensure the VS Code extension is connected and the file exists in your workspace\n- If expecting from GitHub: Push your changes or verify the file path is correct\n", 'content': None}
-```
-
-</details>
-
-<details><summary>Chunk 4</summary>
-
-```
-README.md
-__main__.py
-dead_dml_methods.py
-dml/
-  __init__.py
-  ai_diagnostics.py
-  ast.py
-  ast_test.py
-  c_backend.py
-  codegen.py
-  codegen_test.py
-  compat.py
-  crep.py
-  ctree-test.h
-  ctree.py
-  ctree_test.py
-  dmlc.py
-  dmllex.py
-  dmllex12.py
-  dmllex14.py
-  dmlparse.py
-  expr.py
-  expr_util.py
-  g_backend.py
-  globals.py
-  info_backend.py
-  int_register.py
-  io_memory.py
-  logging.py
-  messages.py
-  objects.py
-  output.py
-  provisional.py
-  reginfo.py
-  reginfo_test.py
-  serialize.py
-  s...
-```
-
-</details>
-
-<details><summary>Chunk 5</summary>
-
-```
-{'success': True, 'content': 'ply==3.4'}
-```
-
-</details>
+Would you like me to investigate specific dependency files or anything related?
 
 - AnswerRelevancy: 100% — Average of 3 relevancy rubrics
-- Faithfulness: 0% — Claims grounded in retrieved context
 
-### Case 5: [PASS] 83%
+### Case 5: [FAIL] 33%
 
 **Q**: How is code generation implemented?
 
-**A**: Code generation is implemented through specific functions within the codebase, focusing on two aspects:
+**A**: The knowledge graph does not have direct information on how code generation is implemented in the project. I can investigate the implementation by exploring relevant files, functions, or documentation in the project. Let me know how you would like to proceed!
 
-1. **Method Implementation** (`codegen.py:3877-3963`):
-   - This function generates the implementation of a method.
-   - It manages input/output arguments, scope, and control flow.
-   - Node ID: `0ca11b3ddc7dcde36ad0c15ba5a8fc15`
-
-2. **Single Statement Code Generation** (`codegen.py:1917-1920`):
-   - This function generates code for a single statement.
-   - Node ID: `6d68573081b6a13ee496e4fac2540315`
-
-Would you like me to retrieve the full code for these functions or provide more details?
-
-**Retrieved Context**:
-
-<details><summary>Chunk 1</summary>
-
-```
-[[QueryResponse(node_id='0ca11b3ddc7dcde36ad0c15ba5a8fc15', docstring='Generates the implementation of a method, managing input/output arguments, scope, and control flow.', file_path='py/dml/codegen.py', start_line=3877, end_line=3963, similarity=0.8259255886077881), QueryResponse(node_id='6d68573081b6a13ee496e4fac2540315', docstring='Generates code for a single statement.', file_path='py/dml/codegen.py', start_line=1917, end_line=1920, similarity=0.8211078643798828)]]
-```
-
-</details>
-
-- AnswerRelevancy: 67% — Average of 3 relevancy rubrics
-- Faithfulness: 100% — Claims grounded in retrieved context
+- AnswerRelevancy: 33% — Average of 3 relevancy rubrics
 

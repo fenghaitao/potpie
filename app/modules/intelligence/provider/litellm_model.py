@@ -6,9 +6,10 @@ and any other LiteLLM-supported provider.
 """
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from pydantic_ai._parts_manager import ModelResponsePartsManager
@@ -38,7 +39,72 @@ except ImportError as e:
 
 logger = setup_logger(__name__)
 
-__all__ = ("LiteLLMModel",)
+__all__ = ("LiteLLMModel", "set_litellm_session_log")
+
+# ---------------------------------------------------------------------------
+# Session log — dumps every litellm.acompletion request+response to a file.
+# Call set_litellm_session_log(path) once before running the evaluator.
+# ---------------------------------------------------------------------------
+
+_session_log = None  # file handle; None means disabled
+
+
+def set_litellm_session_log(path: str) -> None:
+    """Open *path* (append mode) and record all litellm call I/O to it."""
+    global _session_log
+    _session_log = open(path, "a", encoding="utf-8", buffering=1)  # line-buffered
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    _session_log.write(f"\n{'='*80}\n[LITELLM SESSION] {ts}\n{'='*80}\n")
+
+
+def _slog(msg: str) -> None:
+    if _session_log is not None:
+        _session_log.write(msg + "\n")
+
+
+def _slog_call(call_type: str, kwargs: dict, response: Any, error: BaseException | None = None) -> None:
+    """Write a structured request/response block to the session log."""
+    if _session_log is None:
+        return
+    sep = "-" * 60
+    _slog(f"\n{sep}")
+    _slog(f"[{call_type}] model={kwargs.get('model')}  stream={kwargs.get('stream')}")
+    # --- request messages ---
+    messages = kwargs.get("messages", [])
+    _slog(f"  messages ({len(messages)}):")
+    for i, m in enumerate(messages):
+        role = m.get("role", "?")
+        content = m.get("content") or ""
+        tool_calls = m.get("tool_calls")
+        if tool_calls:
+            _slog(f"    [{i}] {role}: <tool_calls> {json.dumps(tool_calls, ensure_ascii=False)[:400]}")
+        else:
+            _slog(f"    [{i}] {role}: {str(content)[:600]}")
+    # --- tools ---
+    tools = kwargs.get("tools")
+    if tools:
+        tool_names = [t.get("function", {}).get("name", "?") for t in tools]
+        _slog(f"  tools: {tool_names}")
+    # --- response or error ---
+    if error is not None:
+        _slog(f"  ERROR: {type(error).__name__}: {error}")
+    elif response is not None and not kwargs.get("stream"):
+        try:
+            choice = response.choices[0]
+            msg = choice.message
+            _slog(f"  response.content: {(msg.content or '')[:800]}")
+            if msg.tool_calls:
+                for tc in msg.tool_calls:
+                    _slog(f"  tool_call: {tc.function.name}  args={tc.function.arguments[:400]}")
+            _slog(f"  finish_reason: {choice.finish_reason}")
+            if hasattr(response, "usage") and response.usage:
+                _slog(f"  usage: prompt={response.usage.prompt_tokens}  completion={response.usage.completion_tokens}")
+        except Exception as exc:
+            _slog(f"  (could not parse response: {exc})")
+    elif kwargs.get("stream"):
+        _slog("  response: <streaming — individual chunks not captured here>")
+    _slog(sep)
+
 
 # GitHub Copilot requires these headers for every request
 _COPILOT_HEADERS = {
@@ -78,11 +144,14 @@ class LiteLLMModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         kwargs = self._build_kwargs(messages, model_request_parameters, model_settings, stream=False)
+        response = None
         try:
             response = await litellm.acompletion(**kwargs)
         except Exception as e:
             logger.error(f"LiteLLMModel.request error for {self._model_name}: {e}")
+            _slog_call("request", kwargs, None, error=e)
             raise
+        _slog_call("request", kwargs, response)
         return self._process_response(response)
 
     @asynccontextmanager
@@ -98,7 +167,9 @@ class LiteLLMModel(Model):
             response = await litellm.acompletion(**kwargs)
         except Exception as e:
             logger.error(f"LiteLLMModel.request_stream error for {self._model_name}: {e}")
+            _slog_call("request_stream", kwargs, None, error=e)
             raise
+        _slog_call("request_stream", kwargs, response)
         yield LiteLLMStreamedResponse(
             model_request_parameters=model_request_parameters,
             response=response,

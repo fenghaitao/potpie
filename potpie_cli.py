@@ -1973,7 +1973,9 @@ async def _eval_wiki(
               help="Timeout in seconds for the skill script executor")
 @click.option("--verbose", "-v", is_flag=True, default=False,
               help="Show debug logging (node types, executor steps, tool args)")
-def eval(prompt: str, skills_dir: str, timeout: int, verbose: bool):
+@click.option("--debug-log", default=None, metavar="FILE",
+              help="Append per-rubric LLM judge trace to FILE (passed to evaluate_qna.py --debug-log)")
+def eval(prompt: str, skills_dir: str, timeout: int, verbose: bool, debug_log: Optional[str]):
     """
     🧪 Evaluate agent response quality using the potpie-evaluator skill.
 
@@ -1986,11 +1988,12 @@ def eval(prompt: str, skills_dir: str, timeout: int, verbose: bool):
         potpie-cli eval --prompt evaluation/qna/prompt.txt
         potpie-cli eval --skills-dir .kiro/skills
         potpie-cli eval --timeout 900
+        potpie-cli eval --debug-log /tmp/qna_judge_trace.log
     """
-    asyncio.run(_eval(prompt, skills_dir, timeout, verbose))
+    asyncio.run(_eval(prompt, skills_dir, timeout, verbose, debug_log))
 
 
-async def _eval(prompt_path: str, skills_dir: str, timeout: int = 600, verbose: bool = False):
+async def _eval(prompt_path: str, skills_dir: str, timeout: int = 600, verbose: bool = False, debug_log: Optional[str] = None):
     import os
     from pydantic_ai import Agent, RunContext
     from pydantic_ai_skills import SkillsToolset
@@ -2012,12 +2015,17 @@ async def _eval(prompt_path: str, skills_dir: str, timeout: int = 600, verbose: 
 
     # Resolve any relative file paths in the prompt to absolute, so the skill
     # script can find them regardless of its working directory
-    repo_root = str(Path(__file__).parent)
     cases_abs = str(Path(__file__).parent / "evaluation/qna/qna_eval_dml_cases.yaml")
+    script_args: dict = {
+        "cases": cases_abs,
+        "repo": "device-modeling-language",
+    }
+    if debug_log:
+        script_args["debug-log"] = debug_log
     user_prompt = user_prompt + (
         f"\n\nIMPORTANT: run_skill_script takes args as a dict, not a list."
         f" Use: skill_name='potpie-evaluator', script_name='scripts/evaluate_qna.py',"
-        f" args={{'cases': '{cases_abs}', 'repo': 'device-modeling-language'}}"
+        f" args={script_args}"
     )
 
     # Resolve skills directory relative to repo root

@@ -3,12 +3,22 @@
 Potpie QnA Agent Evaluator
 
 Calls the live potpie QnA agent directly (via PotpieRuntime), captures
-answers + retrieval_context, then scores with pydantic_evals LLMJudge rubrics:
+answers + retrieval_context, then scores with five metrics:
 
-  - AnswerRelevancy  (no golden reference needed)
-  - Faithfulness     (grounded in retrieved context, when available)
+  - AnswerRelevancy      (always; no golden reference needed)
+  - Faithfulness         (grounded in retrieved context, when available)
+  - ContextualRelevancy  (fraction of context statements relevant to the question,
+                          when retrieval_context is available)
+  - ContextualPrecision  (relevant nodes ranked above irrelevant ones, weighted MAP;
+                          when retrieval_context is available; uses expected_output
+                          or golden_answer as reference, falls back to agent answer)
+  - ContextualRecall     (fraction of reference sentences attributable to context;
+                          when retrieval_context is available; uses expected_output
+                          or golden_answer as reference, falls back to agent answer)
 
-No deepeval dependency — uses pydantic_evals + CopilotModel already in the venv.
+AnswerRelevancy and Faithfulness use pydantic_evals LLMJudge rubrics.
+The three Contextual* metrics are ported from deepeval and use direct LLM calls
+— no deepeval dependency, uses pydantic_evals + CopilotModel already in the venv.
 
 Usage:
   source .env && .venv/bin/python .kiro/skills/potpie-evaluator/scripts/evaluate_qna.py \\
@@ -67,7 +77,14 @@ def load_questions(cases_file: str) -> list:
     for case in cases:
         q = case.get("question") or case.get("input") or case.get("query", "")
         if q:
-            questions.append(q)
+            entry = {"question": q}
+            # Pass through golden reference if present — used by ContextualPrecision
+            # and ContextualRecall (both keys are accepted by QnAEvaluator)
+            for key in ("expected_output", "golden_answer"):
+                if case.get(key):
+                    entry[key] = case[key]
+                    break
+            questions.append(entry)
         else:
             print(f"[WARN] Skipping case with no question: {case}")
 
@@ -106,7 +123,8 @@ async def collect_answers(questions: list, project_id: str, agent_id: str, user_
 
     cases = []
     try:
-        for i, question in enumerate(questions):
+        for i, q_entry in enumerate(questions):
+            question = q_entry["question"]
             print(f"  [{i+1}/{len(questions)}] Asking: {question[:80]}...")
             try:
                 agent_handle = getattr(runtime.agents, agent_id)
@@ -127,7 +145,13 @@ async def collect_answers(questions: list, project_id: str, agent_id: str, user_
                 answer = ""
                 retrieval_context = []
 
-            cases.append({"question": question, "answer": answer, "retrieval_context": retrieval_context})
+            case = {"question": question, "answer": answer, "retrieval_context": retrieval_context}
+            # Carry over any golden reference so ContextualPrecision/Recall can use it
+            for key in ("expected_output", "golden_answer"):
+                if q_entry.get(key):
+                    case[key] = q_entry[key]
+                    break
+            cases.append(case)
     finally:
         await runtime.close()
 
@@ -176,13 +200,18 @@ def generate_report(qna_results: dict, project_id: str, model_name: str, output:
 
 def main():
     parser = argparse.ArgumentParser(description="Potpie QnA Agent Evaluator")
-    parser.add_argument("--cases", required=True, help="YAML file with questions")
+    parser.add_argument("--cases", required=True, help="YAML file with questions and optional golden references (expected_output or golden_answer)")
     parser.add_argument("--project-id", default=None, help="Potpie project ID (or use --repo)")
     parser.add_argument("--repo", default=None, help="Repo name to auto-resolve project ID")
     parser.add_argument("--agent-id", default="codebase_qna_agent")
     parser.add_argument("--user-id", default=os.environ.get("POTPIE_USER_ID", "defaultuser"))
     parser.add_argument("--model", default=None, help="LLM model for scoring")
     parser.add_argument("--output", default="score.md")
+    parser.add_argument(
+        "--debug-log", default=None, metavar="FILE",
+        help="Append per-rubric LLM judge trace (rubric text, task output, score) "
+             "to FILE for debugging metric results.",
+    )
     args = parser.parse_args()
 
     if not args.project_id and not args.repo:
@@ -196,10 +225,31 @@ def main():
 
     # Import evaluator (uses pydantic_evals + CopilotModel, no deepeval)
     try:
-        from evaluators.qna_evaluator import QnAEvaluator
+        from evaluators.qna_evaluator import QnAEvaluator, set_debug_log
     except ImportError as e:
         print(f"[FAIL] Could not import QnAEvaluator: {e}")
         sys.exit(1)
+
+    if args.debug_log:
+        set_debug_log(args.debug_log)
+        print(f"[INFO] Debug log: {args.debug_log}")
+        _p = Path(args.debug_log)
+        # Raw litellm I/O goes to a separate file with a .litellm suffix
+        try:
+            from app.modules.intelligence.provider.litellm_model import set_litellm_session_log
+            litellm_log = str(_p.with_suffix("")) + ".litellm" + _p.suffix
+            set_litellm_session_log(litellm_log)
+            print(f"[INFO] LiteLLM session log: {litellm_log}")
+        except ImportError:
+            pass
+        # Raw Copilot SDK I/O goes to a separate file with a .copilot suffix
+        try:
+            from app.modules.intelligence.provider.copilot_model import set_copilot_session_log
+            copilot_log = str(_p.with_suffix("")) + ".copilot" + _p.suffix
+            set_copilot_session_log(copilot_log)
+            print(f"[INFO] Copilot session log: {copilot_log}")
+        except ImportError:
+            pass
 
     questions = load_questions(args.cases)
     if not questions:
@@ -216,7 +266,7 @@ def main():
     if len(valid_cases) < len(cases):
         print(f"[WARN] {len(cases) - len(valid_cases)} cases skipped (empty answers)")
 
-    print(f"\n[INFO] Scoring {len(valid_cases)} cases with pydantic_evals LLMJudge...")
+    print(f"\n[INFO] Scoring {len(valid_cases)} cases with QnAEvaluator (5 metrics)...")
     evaluator = QnAEvaluator(model=args.model)
     results = evaluator.evaluate_cases(valid_cases)
 
