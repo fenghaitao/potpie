@@ -1,4 +1,4 @@
-"""Tool for writing generated wiki pages to .qoder/repowiki/"""
+"""Tool for writing generated wiki pages"""
 
 import os
 from pathlib import Path
@@ -92,7 +92,7 @@ def get_write_wiki_page_tool() -> StructuredTool:
         func=_write_wiki_page,
         name="write_wiki_page",
         description=(
-            "Write a generated wiki page as a Markdown file into the .qoder/repowiki directory. "
+            "Write a generated wiki page as a Markdown file into the .repowiki directory. "
             "Use this after generating wiki content to persist it to disk. "
             f"Valid sections: {', '.join(VALID_SECTIONS)}"
         ),

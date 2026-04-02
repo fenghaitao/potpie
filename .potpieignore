@@ -18,7 +18,6 @@ __pycache__/
 
 # Tooling/IDE
 .deepwiki/
-.qoder/
 .repos/
 .repos_local/
 .github/
