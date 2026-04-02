@@ -1,0 +1,28 @@
+[project]
+name = "lightrag-apps"
+version = "0.1.0"
+description = "Generate comprehensive hierarchical wiki documentation from code repositories using LightRAG"
+requires-python = ">=3.12"
+dependencies = [
+    "lightrag-hku>=1.4.9,<2.0.0",
+    "openai>=1.0.0",
+    "tiktoken>=0.5.0",
+    "numpy>=1.24.0",
+    "networkx>=3.0.0",
+    "nano-vectordb>=0.0.4",
+    "python-dotenv>=1.0.0",
+    "llama-index-core>=0.10.0",
+    "llama-index-llms-litellm>=0.1.0",
+    "llama-index-embeddings-litellm>=0.1.0",
+    "litellm @ git+https://github.com/fenghaitao/litellm.git",
+]
+
+[project.scripts]
+spec-graph = "lightrag_apps.spec_graph:main"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
