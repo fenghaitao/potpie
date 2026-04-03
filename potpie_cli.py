@@ -16,22 +16,22 @@ from typing import Any, Optional
 
 # Load .env file before importing potpie
 from dotenv import load_dotenv
-load_dotenv(override=True)
+load_dotenv(override=False)
 
-# Ensure backend services are running and apply their dynamic port assignments
-# to env vars before any potpie import reads them.  Auto-starts the backend via
-# singularity/start.sh when the Discovery Server is not running.
 def _apply_session_ports() -> None:
-    """Ensure backend is running and inject its port assignments into os.environ.
+    """Verify backend services are healthy and sync their ports into os.environ + .env.
 
-    Queries the Discovery Server REST API for the current user@host session.
-    If the Discovery Server is not running, invokes singularity/start.sh to
-    start it, then retries.  Falls back to .env defaults if start.sh fails.
+    Discovery Server available, all services healthy:
+        → update .env if any port differs, apply to os.environ, continue.
+    Discovery Server unavailable:
+        → print instructions to run start.sh and exit.
+    Discovery Server available but a service is unhealthy:
+        → print instructions to run stop.sh --force && start.sh and exit.
     """
     import json as _json
     import socket as _socket
-    import subprocess as _sp
     import urllib.request as _ur
+    import re as _re
 
     _repo_root = Path(__file__).parent
     _user = os.environ.get("USER") or os.environ.get("LOGNAME", "")
@@ -43,36 +43,25 @@ def _apply_session_ports() -> None:
         _host = "localhost"
     _session_key = f"{_user}@{_host}"
     _disco_file = _repo_root / ".potpie-sessions" / f"{_session_key}.discovery"
+    _env_file = _repo_root / ".env"
 
-    def _http_get(url):
+    # ── helpers ───────────────────────────────────────────────────────────────
+
+    def _http_get(url: str, timeout: int = 5) -> dict | None:
         try:
-            with _ur.urlopen(url, timeout=5) as resp:
+            with _ur.urlopen(url, timeout=timeout) as resp:
                 return _json.loads(resp.read())
         except Exception:
             return None
 
-    def _apply_from_session(s):
-        if s.get("postgres_server"):
-            os.environ["POSTGRES_SERVER"] = s["postgres_server"]
-        if s.get("neo4j_uri"):
-            os.environ["NEO4J_URI"] = s["neo4j_uri"]
-        if s.get("redis_url"):
-            os.environ["REDIS_URL"] = s["redis_url"]
-        redis_port = (s.get("ports") or {}).get("redis")
-        if redis_port:
-            os.environ["REDISPORT"] = str(redis_port)
+    def _port_open(port: int) -> bool:
+        try:
+            with _socket.create_connection(("127.0.0.1", port), timeout=2):
+                return True
+        except OSError:
+            return False
 
-    def _start_backend():
-        _sh = _repo_root / "singularity" / "start.sh"
-        if not _sh.exists():
-            print("[potpie] singularity/start.sh not found -- cannot auto-start backend",
-                  file=sys.stderr)
-            return
-        print("[potpie] Starting backend services via singularity/start.sh ...",
-              file=sys.stderr)
-        _sp.run(["bash", str(_sh)], cwd=str(_repo_root))
-
-    def _get_discovery_port():
+    def _get_discovery_port() -> int | None:
         if not _disco_file.exists():
             return None
         try:
@@ -81,37 +70,97 @@ def _apply_session_ports() -> None:
             pid  = meta.get("pid")
             if not port or not pid:
                 return None
-            os.kill(pid, 0)  # raises if PID gone
+            os.kill(pid, 0)   # raises if PID gone
             return port
         except Exception:
             return None
 
-    # ── Query Discovery Server ────────────────────────────────────────────────
-    port = _get_discovery_port()
-    if port is None:
-        print("[potpie] Discovery Server not running -- starting backend...", file=sys.stderr)
-        _start_backend()
-        port = _get_discovery_port()
-
-    if port is None:
-        return  # fall back to .env defaults
-
-    session = _http_get(f"http://127.0.0.1:{port}/session/{_session_key}")
-    if session is None:
-        print("[potpie] Session not found in Discovery Server -- starting backend...",
-              file=sys.stderr)
-        _start_backend()
-        port = _get_discovery_port()
-        if port is None:
+    def _dotenv_set(key: str, value: str) -> None:
+        """Update or append a key=value line in .env."""
+        if not _env_file.exists():
             return
-        session = _http_get(f"http://127.0.0.1:{port}/session/{_session_key}")
+        text = _env_file.read_text()
+        pattern = rf"^{_re.escape(key)}=.*"
+        replacement = f"{key}={value}"
+        if _re.search(pattern, text, flags=_re.MULTILINE):
+            text = _re.sub(pattern, replacement, text, flags=_re.MULTILINE)
+        else:
+            text = text.rstrip("\n") + f"\n{replacement}\n"
+        _env_file.write_text(text)
 
+    def _apply_from_session(s: dict) -> None:
+        """Push session values into os.environ and keep .env in sync."""
+        updates: dict[str, str] = {}
+        if s.get("postgres_server"):
+            updates["POSTGRES_SERVER"] = s["postgres_server"]
+        if s.get("neo4j_uri"):
+            updates["NEO4J_URI"] = s["neo4j_uri"]
+        if s.get("redis_url"):
+            updates["BROKER_URL"] = s["redis_url"]
+        ports = s.get("ports") or {}
+        if ports.get("redis"):
+            updates["REDISPORT"] = str(ports["redis"])
+            updates["REDISHOST"] = "127.0.0.1"
+        if ports.get("neo4j_http"):
+            updates["NEO4J_HTTP_PORT"] = str(ports["neo4j_http"])
+        if ports.get("api"):
+            updates["API_PORT"] = str(ports["api"])
+            updates["API_URL"] = f"http://localhost:{ports['api']}"
+        for key, val in updates.items():
+            if os.environ.get(key) != val:
+                os.environ[key] = val
+                _dotenv_set(key, val)
+
+    # ── check Discovery Server ────────────────────────────────────────────────
+
+    disco_port = _get_discovery_port()
+    if disco_port is None:
+        print(
+            "ERROR: Potpie backend is not running.\n"
+            "  Start it with:  bash singularity/start.sh\n"
+            "  Then re-run this command.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    session = _http_get(f"http://127.0.0.1:{disco_port}/session/{_session_key}")
     if session is None:
-        return  # fall back to .env defaults
+        print(
+            "ERROR: Discovery Server is running but has no session for this user.\n"
+            "  Start the backend with:  bash singularity/start.sh\n"
+            "  Then re-run this command.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
+    # ── health-check each allocated service ───────────────────────────────────
+
+    ports = session.get("ports") or {}
+    api_port = ports.get("api")
+    unhealthy: list[str] = []
+
+    if not _port_open(ports.get("postgres", 0)):
+        unhealthy.append("postgres")
+    if not _port_open(ports.get("redis", 0)):
+        unhealthy.append("redis")
+    if not _port_open(ports.get("neo4j_bolt", 0)):
+        unhealthy.append("neo4j")
+    if api_port and not _http_get(f"http://127.0.0.1:{api_port}/health"):
+        unhealthy.append("api")
+
+    if unhealthy:
+        print(
+            f"ERROR: The following backend services are not healthy: {', '.join(unhealthy)}\n"
+            "  Clean up and restart:\n"
+            "    bash singularity/stop.sh --force\n"
+            "    bash singularity/start.sh\n"
+            "  Then re-run this command.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # ── all healthy → apply ports ─────────────────────────────────────────────
     _apply_from_session(session)
-
-_apply_session_ports()
 
 import click
 from rich.console import Console
@@ -316,7 +365,7 @@ ctx_obj = CLIContext()
 @click.version_option(version="0.1.0")
 def cli():
     """
-    🤖 Potpie CLI - Code Intelligence at Your Fingertips
+    \U0001f916 Potpie CLI - Code Intelligence at Your Fingertips
 
     Build knowledge graphs and chat with your codebase from the command line.
 
@@ -328,7 +377,8 @@ def cli():
         potpie-cli cache stats                      # Inference cache summary
         potpie-cli cache clean --inference-expired  # Drop stale inference rows
     """
-    pass
+    _apply_session_ports()
+
 
 
 # ============================================================================

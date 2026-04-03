@@ -14,8 +14,9 @@ source .env
 # Set up Service Account Credentials
 export GOOGLE_APPLICATION_CREDENTIALS="./service-account.json"
 
-# Check if the credentials file exists
-if [ ! -f "$GOOGLE_APPLICATION_CREDENTIALS" ]; then
+# Check if the credentials file exists — only warn in production mode.
+# In developmentMode GCP credentials are not required.
+if [ ! -f "$GOOGLE_APPLICATION_CREDENTIALS" ] && [ "${isDevelopmentMode:-disabled}" != "enabled" ]; then
     echo "Warning: Service Account Credentials file not found at $GOOGLE_APPLICATION_CREDENTIALS"
     echo "Please ensure the service-account.json file is in the current directory if you are working outside developmentMode"
 fi
@@ -191,6 +192,50 @@ echo "  redis:       ${REDIS_PORT}"
 echo "  neo4j bolt:  ${SNG_NEO4J_BOLT_PORT}"
 echo "  neo4j http:  ${SNG_NEO4J_HTTP_PORT}"
 echo "  api:         ${API_PORT}"
+
+# ── Update .env with the allocated ports ─────────────────────────────────────
+# This runs for BOTH the "reuse" and "fresh start" paths so that any tool or
+# script that reads .env directly (e.g. potpie_cli.py via load_dotenv) always
+# sees the correct, current port numbers without needing to query the Discovery
+# Server itself.
+_dotenv_set() {
+    local key="$1" value="$2" file=".env"
+    if grep -q "^${key}=" "$file" 2>/dev/null; then
+        sed -i "s|^${key}=.*|${key}=${value}|" "$file"
+    else
+        printf '%s=%s\n' "$key" "$value" >> "$file"
+    fi
+}
+[ -f .env ] || cp .env.template .env
+_dotenv_set "POSTGRES_SERVER"  "${POSTGRES_SERVER}"
+_dotenv_set "NEO4J_URI"        "${NEO4J_URI}"
+_dotenv_set "NEO4J_HTTP_PORT"  "${SNG_NEO4J_HTTP_PORT}"
+_dotenv_set "REDISHOST"        "127.0.0.1"
+_dotenv_set "REDISPORT"        "${REDIS_PORT}"
+_dotenv_set "BROKER_URL"       "${REDIS_URL}"
+_dotenv_set "API_PORT"         "${API_PORT}"
+_dotenv_set "API_URL"          "http://localhost:${API_PORT}"
+echo "[start.sh] .env updated with dynamically allocated ports."
+
+# ── Update potpie-ui/.env so the UI frontend points to the correct API port ──
+# IMPORTANT: NEXT_PUBLIC_* vars in Next.js are compiled into the client-side
+# bundle when the dev server starts — they are NOT re-read on each page request.
+# Changing .env only takes effect after the Next.js dev server is restarted.
+# start.sh handles this restart automatically in the fresh-start path below.
+if [ -f "potpie-ui/.env" ]; then
+    _dotenv_ui_set() {
+        local key="$1" value="$2" file="potpie-ui/.env"
+        if grep -q "^${key}=" "$file" 2>/dev/null; then
+            sed -i "s|^${key}=.*|${key}=${value}|" "$file"
+        else
+            printf '%s=%s\n' "$key" "$value" >> "$file"
+        fi
+    }
+    _dotenv_ui_set "NEXT_PUBLIC_BASE_URL"              "http://localhost:${API_PORT}"
+    _dotenv_ui_set "NEXT_PUBLIC_CONVERSATION_BASE_URL" "http://localhost:${API_PORT}"
+    _dotenv_ui_set "NEXT_PUBLIC_SUBSCRIPTION_BASE_URL" "http://localhost:${API_PORT}"
+    echo "[start.sh] potpie-ui/.env updated: API URLs → http://localhost:${API_PORT}"
+fi
 
 # ── Check if session is already healthy (reuse) ───────────────────────────────
 # The Discovery Server returns existing ports when the session is still alive.
@@ -382,3 +427,42 @@ until curl -sf http://localhost:${API_PORT}/health >/dev/null 2>&1; do
 done
 
 echo "Potpie is running!"
+
+# ── (Re)start the Next.js UI dev server ────────────────────────────────────
+# NEXT_PUBLIC_* vars are baked into the client bundle at server startup time.
+# Because the API port just changed (fresh start), the running dev server (if
+# any) still has the old port in its bundle.  Kill it and start a new one so
+# the browser picks up the correct API URLs immediately.
+if [ -d "potpie-ui" ]; then
+    UI_PID_FILE="${SESSION_DIR}/${SESSION_KEY}.ui.pid"
+    UI_LOG_FILE="${SESSION_DIR}/ui-dev.log"
+
+    # Kill any previously tracked UI dev server.
+    if [ -f "$UI_PID_FILE" ]; then
+        _old_ui_pid=$(cat "$UI_PID_FILE" 2>/dev/null || true)
+        if [ -n "$_old_ui_pid" ] && kill -0 "$_old_ui_pid" 2>/dev/null; then
+            kill "$_old_ui_pid" 2>/dev/null || true
+            echo "[start.sh] Stopped previous Next.js UI dev server (PID ${_old_ui_pid})."
+        fi
+        rm -f "$UI_PID_FILE"
+    fi
+
+    # Detect package manager.
+    if command -v pnpm >/dev/null 2>&1; then
+        _UI_PM="pnpm"
+    elif command -v npm >/dev/null 2>&1; then
+        _UI_PM="npm"
+    else
+        echo "[start.sh] Warning: pnpm/npm not found — skipping UI dev server start."
+        _UI_PM=""
+    fi
+
+    if [ -n "$_UI_PM" ]; then
+        (cd potpie-ui && $_UI_PM run dev >> "$UI_LOG_FILE" 2>&1) &
+        _UI_PID=$!
+        echo "$_UI_PID" > "$UI_PID_FILE"
+        echo "[start.sh] Next.js UI dev server started (PID ${_UI_PID})."
+        echo "  UI logs : $UI_LOG_FILE"
+        echo "  Open    : http://localhost:3000"
+    fi
+fi

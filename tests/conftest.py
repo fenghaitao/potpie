@@ -116,21 +116,86 @@ def db_session() -> Session:
 
 @pytest.fixture(scope="session")
 def potpie_cli_runner():
-    """Provides a callable to run potpie_cli commands within tests."""
-    cli_script_path = Path(__file__).parent.parent / "potpie_cli.py"
-    def run_cli(*args, check=True, cwd=None):
-        import subprocess
+    """Provides a callable to run potpie_cli commands within tests.
 
+    Streams stderr to the terminal in real-time (so CI logs show progress),
+    captures stdout (needed for JSON parsing), and enforces a per-command
+    timeout to prevent silent hangs.
+    """
+    import subprocess
+    import threading
+    from datetime import datetime
+
+    cli_script_path = Path(__file__).parent.parent / "potpie_cli.py"
+
+    def run_cli(*args, check=True, cwd=None, timeout=1800):
+        """Run a potpie_cli command.
+
+        Args:
+            *args: CLI arguments passed after the script path.
+            check: Raise CalledProcessError on non-zero exit (default True).
+            cwd: Working directory for the subprocess.
+            timeout: Seconds before the subprocess is killed (default 1800).
+        """
         cmd = [sys.executable, str(cli_script_path), *args]
-        print(f'Running CLI command: {" ".join(cmd)}  (cwd={cwd})')
-        result = subprocess.run(
+        ts = datetime.now().strftime("%H:%M:%S")
+        print(f"\n[{ts}] Running: {' '.join(str(a) for a in cmd)}"
+              f"  (cwd={cwd}, timeout={timeout}s)", flush=True)
+
+        proc = subprocess.Popen(
             cmd,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            check=check,
             cwd=cwd,
         )
+
+        # Stream stderr to the terminal live so CI logs show what is happening,
+        # while also accumulating it for error messages.
+        stderr_lines: list[str] = []
+
+        def _stream_stderr() -> None:
+            assert proc.stderr is not None
+            for line in proc.stderr:
+                line = line.rstrip("\n")
+                print(f"  [stderr] {line}", flush=True)
+                stderr_lines.append(line)
+
+        stderr_thread = threading.Thread(target=_stream_stderr, daemon=True)
+        stderr_thread.start()
+
+        try:
+            stdout, _ = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.communicate()
+            stderr_thread.join(timeout=5)
+            raise subprocess.TimeoutExpired(
+                cmd, timeout,
+                output=None,
+                stderr="\n".join(stderr_lines),
+            )
+        finally:
+            stderr_thread.join(timeout=5)
+
+        stderr_text = "\n".join(stderr_lines)
+        ts = datetime.now().strftime("%H:%M:%S")
+        print(f"[{ts}] Command finished (exit={proc.returncode})", flush=True)
+
+        # Build a CompletedProcess-compatible result.
+        result = subprocess.CompletedProcess(
+            args=cmd,
+            returncode=proc.returncode,
+            stdout=stdout,
+            stderr=stderr_text,
+        )
+
+        if check and result.returncode != 0:
+            raise subprocess.CalledProcessError(
+                result.returncode, cmd, result.stdout, result.stderr
+            )
         return result
+
     return run_cli
 
 @pytest_asyncio.fixture(scope="function")

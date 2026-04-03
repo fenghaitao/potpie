@@ -89,6 +89,17 @@ for s in sessions:
     find singularity/potpie-data/neo4j/data -name "store_lock" -delete 2>/dev/null \
         && echo "  store_lock(s) removed." || echo "  no store_lock files found."
 
+    # Kill any tracked UI dev servers for this user in any session.
+    for _ui_pid_file in "${SESSION_DIR}/"*".ui.pid"; do
+        [ -f "$_ui_pid_file" ] || continue
+        _ui_pid=$(cat "$_ui_pid_file" 2>/dev/null || true)
+        if [ -n "$_ui_pid" ] && kill -0 "$_ui_pid" 2>/dev/null; then
+            kill "$_ui_pid" 2>/dev/null || true
+            echo "  Stopped Next.js UI dev server (PID ${_ui_pid}) from ${_ui_pid_file}."
+        fi
+        rm -f "$_ui_pid_file"
+    done
+
     echo "Force-stop complete for '${POTPIE_USER}' in this repo."
     exit 0
 fi
@@ -108,5 +119,16 @@ _maybe_stop_discovery "$DISCOVERY_FILE"
 # user by the OS, so 'down' only affects this user's instances on this machine.
 echo "Stopping Singularity services..."
 bash singularity/down.sh
+
+# ── Stop the Next.js UI dev server if we started it ─────────────────────────
+UI_PID_FILE="${SESSION_DIR}/${SESSION_KEY}.ui.pid"
+if [ -f "$UI_PID_FILE" ]; then
+    _ui_pid=$(cat "$UI_PID_FILE" 2>/dev/null || true)
+    if [ -n "$_ui_pid" ] && kill -0 "$_ui_pid" 2>/dev/null; then
+        kill "$_ui_pid" 2>/dev/null || true
+        echo "Stopped Next.js UI dev server (PID ${_ui_pid})."
+    fi
+    rm -f "$UI_PID_FILE"
+fi
 
 echo "All Potpie services for ${SESSION_KEY} have been stopped successfully!"

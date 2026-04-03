@@ -9,6 +9,11 @@ from datetime import datetime
 from pathlib import Path
 
 
+def _step(n: int | str, msg: str) -> None:
+    ts = datetime.now().strftime("%H:%M:%S")
+    print(f"\n[{ts}] ══ Step {n}: {msg} ══", flush=True)
+
+
 def test_parse_repo_then_generate_wiki(potpie_cli_runner):
     with tempfile.TemporaryDirectory(prefix="potpie-int-test-") as _tmp:
         _run_workflow(potpie_cli_runner, Path(_tmp))
@@ -20,12 +25,14 @@ def _run_workflow(potpie_cli_runner, workflow_dir: Path):
     dml_dir = workflow_dir / project_name
 
     # Step 1: Clone the repository (skip if already present)
+    _step(1, "Clone repository")
     if not dml_dir.exists():
         subprocess.run(
             ["git", "clone", "--branch", "main",
              "https://github.com/fenghaitao/device-modeling-language",
              str(dml_dir)],
             check=True,
+            timeout=300,
         )
     assert dml_dir.is_dir(), "Cloned repository directory should exist"
 
@@ -34,13 +41,15 @@ def _run_workflow(potpie_cli_runner, workflow_dir: Path):
         r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I
     )
 
-    parse_result = potpie_cli_runner("parse", "repo", str(dml_dir))
+    _step(2, "Parse repository")
+    parse_result = potpie_cli_runner("parse", "repo", str(dml_dir), timeout=900)
     assert parse_result.returncode == 0, (
         f"parse repo failed (exit {parse_result.returncode}):\n{parse_result.stderr}"
     )
 
     # Capture the new project ID for teardown
-    list_result = potpie_cli_runner("projects", "list", "--json", check=False)
+    _step("2.1", "List projects (find project ID)")
+    list_result = potpie_cli_runner("projects", "list", "--json", check=False, timeout=60)
     import json
 
     project_id = None
@@ -59,8 +68,9 @@ def _run_workflow(potpie_cli_runner, workflow_dir: Path):
 
     try:
         # Step 3: Generate the wiki
+        _step(3, "Generate wiki")
         wiki_result = potpie_cli_runner("deepwiki-open-wiki", "-r", project_name,
-                                        "-p", project_id, cwd=workflow_dir)
+                                        "-p", project_id, cwd=workflow_dir, timeout=900)
         assert wiki_result.returncode == 0, (
             f"wiki generation failed (exit {wiki_result.returncode}):\n{wiki_result.stderr}"
         )
@@ -75,6 +85,7 @@ def _run_workflow(potpie_cli_runner, workflow_dir: Path):
         # the base dir, so the actual output lands at dml_dir/intel/device-modeling-language/
         deepwiki_base_dir = dml_dir
         deepwiki_dir = deepwiki_base_dir / "intel" / "device-modeling-language"
+        _step(4, "Download reference wiki from deepwiki.com")
         deepwiki_export_result = subprocess.run(
             [
                 "deepwiki-export",
@@ -83,6 +94,7 @@ def _run_workflow(potpie_cli_runner, workflow_dir: Path):
             ],
             capture_output=True,
             text=True,
+            timeout=300,
             cwd=str(dml_dir),
         )
         assert deepwiki_export_result.returncode == 0, (
@@ -94,6 +106,7 @@ def _run_workflow(potpie_cli_runner, workflow_dir: Path):
         assert ref_md_files, "deepwiki-export should produce at least one Markdown file"
 
         # Step 5: Evaluate the wiki against the reference docs
+        _step(5, "Evaluate wiki quality")
         eval_output = dml_dir / "wiki_eval_score.md"
         eval_result = potpie_cli_runner(
             "eval-wiki",
@@ -103,6 +116,7 @@ def _run_workflow(potpie_cli_runner, workflow_dir: Path):
             "--output", str(eval_output),
             "--verbose",
             cwd=str(workflow_dir),
+            timeout=600,
         )
         assert eval_result.returncode == 0, (
             f"eval-wiki failed (exit {eval_result.returncode}):\n{eval_result.stderr}"
@@ -115,6 +129,8 @@ def _run_workflow(potpie_cli_runner, workflow_dir: Path):
 
     finally:
         # Step 6: Cleanup
+        _step(6, "Cleanup")
         if project_id:
-            print(f"Cleaning up project {project_id}...")
-            potpie_cli_runner("projects", "remove", project_id, "-f", check=False, cwd=workflow_dir)
+            print(f"Cleaning up project {project_id}...", flush=True)
+            potpie_cli_runner("projects", "remove", project_id, "-f", check=False,
+                              cwd=workflow_dir, timeout=120)
