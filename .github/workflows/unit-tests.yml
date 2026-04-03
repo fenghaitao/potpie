@@ -217,7 +217,7 @@ jobs:
             exit 1
           fi
 
-          uv run pytest tests/integration-tests/test_dmlc_wiki.py \
+          uv run pytest tests/integration-tests/test_deepwiki_open_wiki.py \
             -v -s \
             --tb=short \
             --junitxml=test-results/junit-int.xml
