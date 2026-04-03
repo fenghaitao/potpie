@@ -491,6 +491,12 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
             f"Running pydantic-ai agent {'with multimodal support' if ctx.has_images() else ''}"
         )
 
+        from app.modules.intelligence.tracing.logfire_tracer import set_conversation_context
+
+        set_conversation_context(
+            ctx.conversation_id or ctx.curr_agent_id, ctx.curr_agent_id
+        )
+
         # Initialize code changes manager with conversation_id for persistence across messages
         from app.modules.intelligence.tools.code_changes_manager import (
             _init_code_changes_manager,
@@ -635,6 +641,12 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
     ) -> AsyncGenerator[ChatAgentResponse, None]:
         logger.info(
             f"Running pydantic-ai agent stream {'with multimodal support' if ctx.has_images() else ''}"
+        )
+
+        from app.modules.intelligence.tracing.logfire_tracer import set_conversation_context
+
+        set_conversation_context(
+            ctx.conversation_id or ctx.curr_agent_id, ctx.curr_agent_id
         )
 
         # Check if we have images and if the model supports vision

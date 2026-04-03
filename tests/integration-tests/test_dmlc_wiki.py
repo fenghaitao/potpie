@@ -53,16 +53,21 @@ def _run_workflow(potpie_cli_runner, workflow_dir: Path):
     import json
 
     project_id = None
+    out = list_result.stdout
+    if '[' in out and ']' in out:
+        print('Generate new output')
+        out = out[out.index('[{'):out.rindex('}]') + 2] # Workaround logfire output
     try:
-        projects = json.loads(list_result.stdout)
+        projects = json.loads(out)
         for project in projects:
+            print(f"project repo_name: {project.get('repo_name')}")
             if project['repo_name'] == project_name:
                 project_id = project['id']
                 break
-    except json.JSONDecodeError:
-        pass
-    except KeyError:
-        pass
+    except json.JSONDecodeError as e:
+        assert False, f"Failed to parse projects list as JSON:\n{e}\nOutput was:\n{list_result.stdout}"
+    except KeyError as e:
+        assert False, f"Missing expected key in project data: {e}\nOutput was:\n{list_result.stdout}"
 
     assert project_id, "Project should be registered after parsing"
 

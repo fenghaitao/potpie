@@ -8,6 +8,7 @@ import asyncio
 import json
 import os
 import sys
+import uuid
 import subprocess
 import threading
 from collections.abc import Callable
@@ -349,6 +350,8 @@ class CLIContext:
     async def get_runtime(self) -> PotpieRuntime:
         """Get or initialize runtime."""
         if self.runtime is None:
+            from app.modules.intelligence.tracing.logfire_tracer import initialize_logfire_tracing
+            initialize_logfire_tracing()
             self.runtime = PotpieRuntime.from_env()
             await self.runtime.initialize()
         return self.runtime
@@ -736,7 +739,7 @@ async def _ask(query: str, project_id: Optional[str], agent_id: str, render_mark
             console.print(f"\n[bold cyan]Question:[/bold cyan] {query}")
             console.print(f"[dim]Project: {project_info.repo_name} | Agent: {agent_id}[/dim]\n")
 
-        # Create context
+        # Create context (one conversation_id per ask for tracing / future resume flags)
         ctx = ChatContext(
             project_id=project_id,
             project_name=project_info.repo_name,
@@ -744,6 +747,7 @@ async def _ask(query: str, project_id: Optional[str], agent_id: str, render_mark
             query=f"[Codebase: {project_info.repo_name}, project_id: {project_id}] {query}",
             history=[],
             user_id=ctx_obj.default_user_id,
+            conversation_id=str(uuid.uuid4()),
         )
 
         if not output_json:

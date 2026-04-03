@@ -200,6 +200,12 @@ class PydanticMultiAgent(ChatAgent):
         # Store context for delegation functions (same ctx used when creating delegate agents)
         self._current_context = ctx
 
+        # Stamp conversation_id onto the active OTEL span for file-based tracing
+        from app.modules.intelligence.tracing.logfire_tracer import set_conversation_context
+        set_conversation_context(
+            ctx.conversation_id or ctx.curr_agent_id, ctx.curr_agent_id
+        )
+
         # Initialize managers before any agent runs: CodeChangesManager (persistence + local_mode for show_diff),
         # todo/requirement managers. local_mode is True only for VS Code extension; it controls tool list and show_diff behavior.
         logger.info(
@@ -254,6 +260,13 @@ class PydanticMultiAgent(ChatAgent):
 
         # Store context for delegation functions (same ctx used when creating delegate agents)
         self._current_context = ctx
+
+        # Stamp conversation_id onto the active OTEL span for file-based tracing (same as run())
+        from app.modules.intelligence.tracing.logfire_tracer import set_conversation_context
+
+        set_conversation_context(
+            ctx.conversation_id or ctx.curr_agent_id, ctx.curr_agent_id
+        )
 
         # Initialize managers before any agent runs (same as run()); local_mode controls tool list and show_diff behavior.
         logger.info(
