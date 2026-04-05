@@ -95,6 +95,24 @@ class PydanticRagAgent(ChatAgent):
 
         self._history_processor = create_history_processor(llm_provider)
 
+        # Build capabilities: tools + audit + eviction
+        from app.modules.intelligence.capabilities import (
+            PotpieToolsCapability,
+            AuditCapability,
+            make_eviction_processor,
+        )
+
+        self._tools_capability = PotpieToolsCapability(
+            tools=tools,
+            toolset_id="potpie-tools",
+        )
+        self._audit_capability = AuditCapability(
+            log_calls=True,
+            log_results=True,
+            block_dangerous_bash=False,
+        )
+        self._eviction_processor = make_eviction_processor(token_limit=20_000)
+
     def _create_agent(self, ctx: ChatContext) -> Agent:
         config = self.config
 
@@ -135,12 +153,9 @@ class PydanticRagAgent(ChatAgent):
             "supports_tool_parallelism", True
         )
 
-        # Use wrap_structured_tools to pass args_schema for tools (e.g. add_requirements)
-        # so the LLM receives correct parameter definitions and doesn't guess/hallucinate args.
-        wrapped_tools = wrap_structured_tools(self.tools)
         agent_kwargs = {
             "model": self.llm_provider.get_pydantic_model(),
-            "tools": wrapped_tools,
+            "capabilities": [self._tools_capability, self._audit_capability],
             "mcp_servers": mcp_toolsets,
             "instructions": f"""
 # Agent Execution Guidelines
@@ -185,7 +200,7 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
             "end_strategy": "exhaustive",
             "model_settings": {"max_tokens": 14000},
             "instrument": True,
-            "history_processors": [self._history_processor],
+            "history_processors": [self._eviction_processor, self._history_processor],
         }
 
         if not allow_parallel_tools:
