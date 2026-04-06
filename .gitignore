@@ -84,7 +84,7 @@ worktrees/
 
 .ruff_cache/
 .pytest_cache/
-specs/
+/specs/
 
 # SCIP generated files
 *.scip
