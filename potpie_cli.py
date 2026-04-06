@@ -112,39 +112,47 @@ def _apply_session_ports() -> None:
                 os.environ[key] = val
                 _dotenv_set(key, val)
 
-    # ── check Discovery Server ────────────────────────────────────────────────
+    # ── check Discovery Server (singularity/start.sh) or fall back to .env ──
 
     disco_port = _get_discovery_port()
-    if disco_port is None:
-        print(
-            "ERROR: Potpie backend is not running.\n"
-            "  Start it with:  bash singularity/start.sh\n"
-            "  Then re-run this command.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    session = _http_get(f"http://127.0.0.1:{disco_port}/session/{_session_key}")
-    if session is None:
-        print(
-            "ERROR: Discovery Server is running but has no session for this user.\n"
-            "  Start the backend with:  bash singularity/start.sh\n"
-            "  Then re-run this command.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+    if disco_port is not None:
+        session = _http_get(f"http://127.0.0.1:{disco_port}/session/{_session_key}")
+        if session is None:
+            print(
+                "ERROR: Discovery Server is running but has no session for this user.\n"
+                "  Start the backend with:  bash singularity/start.sh\n"
+                "  Then re-run this command.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        ports = session.get("ports") or {}
+        api_port = ports.get("api")
+        postgres_port = ports.get("postgres", 0)
+        redis_port = ports.get("redis", 0)
+        neo4j_bolt_port = ports.get("neo4j_bolt", 0)
+        use_session = True
+    else:
+        # Fall back to ports already set in .env (e.g. scripts/start.sh / Docker)
+        import re as _re2
+        def _parse_port(url: str) -> int:
+            m = _re2.search(r":(\d+)", url or "")
+            return int(m.group(1)) if m else 0
+        api_port = int(os.environ.get("API_PORT", "8001"))
+        postgres_port = _parse_port(os.environ.get("POSTGRES_SERVER", ""))
+        redis_port = _parse_port(os.environ.get("BROKER_URL", "")) or int(os.environ.get("REDISPORT", "6379"))
+        neo4j_bolt_port = _parse_port(os.environ.get("NEO4J_URI", ""))
+        session = None
+        use_session = False
 
     # ── health-check each allocated service ───────────────────────────────────
 
-    ports = session.get("ports") or {}
-    api_port = ports.get("api")
     unhealthy: list[str] = []
 
-    if not _port_open(ports.get("postgres", 0)):
+    if not _port_open(postgres_port):
         unhealthy.append("postgres")
-    if not _port_open(ports.get("redis", 0)):
+    if not _port_open(redis_port):
         unhealthy.append("redis")
-    if not _port_open(ports.get("neo4j_bolt", 0)):
+    if not _port_open(neo4j_bolt_port):
         unhealthy.append("neo4j")
     if api_port and not _http_get(f"http://127.0.0.1:{api_port}/health"):
         unhealthy.append("api")
@@ -152,16 +160,15 @@ def _apply_session_ports() -> None:
     if unhealthy:
         print(
             f"ERROR: The following backend services are not healthy: {', '.join(unhealthy)}\n"
-            "  Clean up and restart:\n"
-            "    bash singularity/stop.sh --force\n"
-            "    bash singularity/start.sh\n"
+            "  Ensure the backend is running (scripts/start.sh or singularity/start.sh)\n"
             "  Then re-run this command.",
             file=sys.stderr,
         )
         sys.exit(1)
 
     # ── all healthy → apply ports ─────────────────────────────────────────────
-    _apply_from_session(session)
+    if use_session and session:
+        _apply_from_session(session)
 
 import click
 from rich.console import Console
