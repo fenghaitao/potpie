@@ -106,6 +106,10 @@ dev = [
     "ruff>=0.14.3",
 ]
 
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [tool.setuptools.packages.find]
 include = ["potpie*", "app*"]
 
